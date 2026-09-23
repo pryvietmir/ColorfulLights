@@ -41,6 +41,11 @@ public final class LightVolume {
 
     private static final int[][] OFFSETS;
     private static final int[] COSTS;
+    /** Index offset of each neighbor, and of the single-axis steps a diagonal move passes (both within the grid). */
+    private static final int[] DELTAS;
+    private static final int[][] AXIS_DELTAS;
+    /** Cells on the faces of the grid, whose neighbors need bounds checks. */
+    private static final boolean[] BORDER = new boolean[CELLS];
 
     static {
         int n = 0;
@@ -55,6 +60,25 @@ public final class LightVolume {
                     COSTS[n] = axes == 1 ? 10 : axes == 2 ? 14 : 17; // ~ UNIT * sqrt(axes)
                     n++;
                 }
+        DELTAS = new int[26];
+        AXIS_DELTAS = new int[26][];
+        for (int i = 0; i < 26; i++) {
+            int[] d = OFFSETS[i];
+            DELTAS[i] = d[0] + SIZE * (d[1] + SIZE * d[2]);
+            if (Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) == 1) {
+                AXIS_DELTAS[i] = new int[0];
+                continue;
+            }
+            IntArrayList steps = new IntArrayList();
+            if (d[0] != 0) steps.add(d[0]);
+            if (d[1] != 0) steps.add(SIZE * d[1]);
+            if (d[2] != 0) steps.add(SIZE * SIZE * d[2]);
+            AXIS_DELTAS[i] = steps.toIntArray();
+        }
+        for (int z = 0; z < SIZE; z++)
+            for (int y = 0; y < SIZE; y++)
+                for (int x = 0; x < SIZE; x++)
+                    BORDER[index(x, y, z)] = x == 0 || y == 0 || z == 0 || x == SIZE - 1 || y == SIZE - 1 || z == SIZE - 1;
     }
 
     private LightVolume() {
@@ -65,11 +89,14 @@ public final class LightVolume {
     }
 
     /**
-     * Computes visibility (0..255 per cell, x fastest, then y, then z) for a light in block (cx, cy, cz).
+     * Computes visibility (0..255 per cell, x fastest, then y, then z) for a light of the given level in block
+     * (cx, cy, cz). Cells beyond the light's reach are left at 0.
      * Must run on the client thread (it reuses scratch buffers).
      */
-    public static byte[] compute(Level level, int cx, int cy, int cz) {
+    public static byte[] compute(Level level, int cx, int cy, int cz, int lightLevel) {
         int ox = cx - CENTER, oy = cy - CENTER, oz = cz - CENTER;
+        // no point flooding further than the light reaches (plus the detour allowance)
+        int maxCost = Math.min(MAX_COST, (int) ((lightLevel + 1 + BEND_TOLERANCE) * UNIT));
 
         byte[] opacity = OPACITY;
         fillOpacity(level, ox, oy, oz, opacity);
@@ -83,23 +110,39 @@ public final class LightVolume {
         cost[start] = 0;
         buckets[0].add(start);
 
-        for (int c = 0; c <= MAX_COST; c++) {
+        for (int c = 0; c <= maxCost; c++) {
             IntArrayList bucket = buckets[c];
             for (int k = 0; k < bucket.size(); k++) {
                 int cell = bucket.getInt(k);
                 if (cost[cell] != c) continue; // stale entry
-                int x = cell % SIZE, y = (cell / SIZE) % SIZE, z = cell / (SIZE * SIZE);
-                for (int i = 0; i < OFFSETS.length; i++) {
-                    int[] d = OFFSETS[i];
-                    int nx = x + d[0], ny = y + d[1], nz = z + d[2];
-                    if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) continue;
-                    int next = index(nx, ny, nz);
+                boolean border = BORDER[cell];
+                int x = 0, y = 0, z = 0;
+                if (border) {
+                    x = cell % SIZE;
+                    y = (cell / SIZE) % SIZE;
+                    z = cell / (SIZE * SIZE);
+                }
+                for (int i = 0; i < DELTAS.length; i++) {
+                    if (border) {
+                        int[] d = OFFSETS[i];
+                        int nx = x + d[0], ny = y + d[1], nz = z + d[2];
+                        if (nx < 0 || ny < 0 || nz < 0 || nx >= SIZE || ny >= SIZE || nz >= SIZE) continue;
+                    }
+                    int next = cell + DELTAS[i];
                     byte o = opacity[next];
                     if (o == WALL) continue;
                     // no squeezing diagonally past solid blocks: every axis step on the way must be open
-                    if (COSTS[i] != 10 && !diagonalOpen(opacity, x, y, z, d)) continue;
+                    int[] axes = AXIS_DELTAS[i];
+                    boolean open = true;
+                    for (int a = 0; a < axes.length; a++) {
+                        if (opacity[cell + axes[a]] == WALL) {
+                            open = false;
+                            break;
+                        }
+                    }
+                    if (!open) continue;
                     int nc = c + COSTS[i] + o * UNIT;
-                    if (nc > MAX_COST || nc >= cost[next]) continue;
+                    if (nc > maxCost || nc >= cost[next]) continue;
                     cost[next] = nc;
                     buckets[nc].add(next);
                 }
@@ -165,13 +208,6 @@ public final class LightVolume {
                 }
             }
         }
-    }
-
-    private static boolean diagonalOpen(byte[] opacity, int x, int y, int z, int[] d) {
-        if (d[0] != 0 && opacity[index(x + d[0], y, z)] == WALL) return false;
-        if (d[1] != 0 && opacity[index(x, y + d[1], z)] == WALL) return false;
-        if (d[2] != 0 && opacity[index(x, y, z + d[2])] == WALL) return false;
-        return true;
     }
 
     /** Visibility (0..1) of the cell containing a world position, or 0 outside the volume. */

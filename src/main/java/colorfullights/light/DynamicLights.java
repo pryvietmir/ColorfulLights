@@ -190,6 +190,7 @@ public final class DynamicLights {
             int level = Math.min(15, lightLevel);
             int color = rgb < 0 ? -1 : ColorSampler.saturate(rgb);
             if (level != s.level || color != s.color) s.lightChanged = true;
+            if (level > s.level) s.volumeDirty = true; // the visibility volume only reaches as far as the light did
             s.level = level;
             s.color = color;
             s.seen = true;
@@ -259,7 +260,7 @@ public final class DynamicLights {
             Source s = pending.get(i);
             int bx = (int) Math.floor(s.x), by = (int) Math.floor(s.y), bz = (int) Math.floor(s.z);
             long volumeStart = Timings.start();
-            s.vis = LightVolume.compute(mc.level, bx, by, bz);
+            s.vis = LightVolume.compute(mc.level, bx, by, bz, s.level);
             Timings.end(Timings.Part.LIGHT_VOLUME, volumeStart);
             s.ox = bx - LightVolume.CENTER;
             s.oy = by - LightVolume.CENTER;

@@ -46,12 +46,10 @@ public final class WorldTint {
         int tint = CACHE.get(key);
         if (tint < 0) {
             long start = Timings.start();
-            float cx = bx + 0.5f, cy = by + 0.5f, cz = bz + 0.5f;
             DynamicLights.Snapshot dynamic = DynamicLights.current();
-            float dyn = dynamic.isEmpty() ? 0f : DynamicLights.levelAt(dynamic, cx, cy, cz, false);
+            float dyn = dynamic.isEmpty() ? 0f : DynamicLights.levelAt(dynamic, bx + 0.5f, by + 0.5f, bz + 0.5f, false);
             // things in the world get light like blocks do: normal reach (walls are respected by world light)
-            ColorSampler.Emitters emitters = ColorSampler.Emitters.around(level, bx, by, bz, bx, by, bz, 1f);
-            tint = ColorSampler.objectTint(level, cx, cy, cz, emitters, dyn, SCRATCH);
+            tint = ColorSampler.nearbyTint(level, bx, by, bz, dyn, SCRATCH);
             CACHE.put(key, tint);
             Timings.end(Timings.Part.WORLD_TINT, start);
         }

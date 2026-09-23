@@ -283,6 +283,22 @@ public final class ColorSampler {
     }
 
     /**
+     * Light color multiplier for something small in the world (entity, particle, block entity) at a block center,
+     * with light reaching it like it reaches blocks. Allocation-free; {@code scratch} is a reusable float[5].
+     */
+    public static int nearbyTint(Level level, int bx, int by, int bz, float dyn, float[] scratch) {
+        scratch[0] = scratch[1] = scratch[2] = scratch[3] = scratch[4] = 0f;
+        if (!Config.enabled || !LightColors.isReady()) return WHITE;
+        BlockPos pos = new BlockPos(bx, by, bz);
+        float blockLevel = Math.max(level.getBrightness(LightLayer.BLOCK, pos), dyn);
+        if (blockLevel <= 0f) return WHITE;
+        float cx = bx + 0.5f, cy = by + 0.5f, cz = bz + 0.5f;
+        accumulateNearby(bx, by, bz, scratch); // same as terrain: placed emitters around the block
+        if (dyn > 0f) accumulateDynamic(cx, cy, cz, false, scratch);
+        return finishObjectTint(level, pos, blockLevel, scratch);
+    }
+
+    /**
      * {@link #objectTint(Level, double, double, double)} with precomputed nearby emitters and dynamic light level
      * {@code dyn} at the position. {@code scratch} is a reusable float[5]; on return scratch[4] holds the block
      * light level (0..15) the object gets there: the world's, the extended reach of emitters, or dynamic light.
@@ -296,6 +312,11 @@ public final class ColorSampler {
         float blockLevel = Math.max(Math.max(level.getBrightness(LightLayer.BLOCK, pos), scratch[4]), dyn);
         scratch[4] = blockLevel;
         if (dyn > 0f) accumulateDynamic(px, py, pz, false, scratch);
+        return finishObjectTint(level, pos, blockLevel, scratch);
+    }
+
+    /** Turns a weighted color sum in scratch[0..3] into an object's color multiplier. */
+    private static int finishObjectTint(Level level, BlockPos pos, float blockLevel, float[] scratch) {
         if (blockLevel <= 0f || scratch[3] <= 0f) return WHITE;
         int tint = saturate(scratch[0], scratch[1], scratch[2]);
 
