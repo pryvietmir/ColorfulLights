@@ -1,8 +1,8 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "groupid.colorful_lights.mixin",
-  "plugin": "groupid.colorful_lights.mixin.ColorfulLightsMixinPlugin",
+  "package": "colorfullights.mixin",
+  "plugin": "colorfullights.mixin.ColorfulLightsMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
   ],
