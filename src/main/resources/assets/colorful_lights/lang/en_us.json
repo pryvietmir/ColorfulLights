@@ -1,0 +1,12 @@
+{
+  "colorful_lights.configuration.enabled": "Enabled",
+  "colorful_lights.configuration.intensity": "Tint intensity",
+  "colorful_lights.configuration.saturation": "Color saturation",
+  "colorful_lights.configuration.brightness": "Light brightness",
+  "colorful_lights.configuration.dynamicLights": "Dynamic lights",
+  "colorful_lights.configuration.objectLightRange": "Light reach on ships & contraptions",
+  "colorful_lights.configuration.textureColors": "Colors from textures",
+  "colorful_lights.configuration.skyReduction": "Sky light wash-out",
+  "colorful_lights.configuration.defaultColor": "Default light color",
+  "colorful_lights.configuration.colors": "Block light colors"
+}

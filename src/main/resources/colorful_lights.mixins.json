@@ -1,0 +1,31 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "groupid.colorful_lights.mixin",
+  "plugin": "groupid.colorful_lights.mixin.ColorfulLightsMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+  ],
+  "client": [
+    "EntityRendererMixin",
+    "LevelChunkMixin",
+    "LevelRendererMixin",
+    "ModelBlockRendererMixin",
+    "SectionCompilerMixin",
+    "create.ContraptionEntityRendererMixin",
+    "create.ContraptionVisualMixin",
+    "flywheel.GlProgramMixin",
+    "flywheel.SourceFileMixin",
+    "sable.VanillaChunkedSubLevelRenderDataMixin",
+    "sodium.BlockRendererMixin",
+    "sodium.DefaultFluidRendererMixin",
+    "sodium.DefaultShaderInterfaceMixin",
+    "sodium.ShaderLoaderMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

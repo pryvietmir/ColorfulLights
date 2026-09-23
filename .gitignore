@@ -1,0 +1,21 @@
+# Gradle / build output
+.gradle/
+build/
+out/
+src/generated/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Dev game directory (worlds, configs, test mods, logs)
+run/
+
+# Third-party mod jars for compiling; fetched with `gradlew fetchLibs`
+libs/
+
+# JVM crash dumps
+hs_err_pid*.log
+replay_pid*.log
