@@ -2,6 +2,7 @@ package colorfullights.light;
 
 import colorfullights.Config;
 import colorfullights.compat.CreateCompat;
+import colorfullights.debug.Timings;
 import colorfullights.compat.SableCompat;
 import colorfullights.render.DynamicLightShader;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -200,6 +201,15 @@ public final class DynamicLights {
     // --- per-tick update (client thread) ---
 
     public static void tick(Minecraft mc) {
+        long start = Timings.start();
+        try {
+            tickImpl(mc);
+        } finally {
+            Timings.end(Timings.Part.DYNAMIC_TICK, start);
+        }
+    }
+
+    private static void tickImpl(Minecraft mc) {
         LongSet dirtySections = new LongOpenHashSet();
         boolean baked = !inShader();
 
@@ -248,7 +258,9 @@ public final class DynamicLights {
         for (int i = 0; i < pending.size() && i < VOLUME_BUDGET; i++) {
             Source s = pending.get(i);
             int bx = (int) Math.floor(s.x), by = (int) Math.floor(s.y), bz = (int) Math.floor(s.z);
+            long volumeStart = Timings.start();
             s.vis = LightVolume.compute(mc.level, bx, by, bz);
+            Timings.end(Timings.Part.LIGHT_VOLUME, volumeStart);
             s.ox = bx - LightVolume.CENTER;
             s.oy = by - LightVolume.CENTER;
             s.oz = bz - LightVolume.CENTER;

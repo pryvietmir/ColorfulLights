@@ -35,7 +35,7 @@ public final class ColorSampler {
     }
 
     /** Maximum extra light used to make up for the darkening caused by a colored tint. */
-    private static final float MAX_COMPENSATION = 2f;
+    private static final float MAX_COMPENSATION = 2.5f;
 
     /**
      * Shades a vertex: tints its color and brightens its block light.
@@ -75,8 +75,7 @@ public final class ColorSampler {
                 int g = Math.round(((color >> 8) & 0xFF) * mg);
                 int b = Math.round((color & 0xFF) * mb);
                 color = (color & 0xFF000000) | r << 16 | g << 8 | b;
-                float kept = (mr + mg + mb) / 3f;
-                boost *= Math.min(MAX_COMPENSATION, 1f / Math.max(kept, 1e-3f));
+                boost *= Math.min(MAX_COMPENSATION, 1f / Math.max(keptBrightness(mr, mg, mb), 1e-3f));
             }
         }
         int boosted = Math.min(240, Math.round(blockRaw * boost));
@@ -103,6 +102,14 @@ public final class ColorSampler {
 
     private static int swapRB(int c) {
         return (c & 0xFF00FF00) | (c & 0xFF) << 16 | (c >> 16) & 0xFF;
+    }
+
+    /**
+     * How bright a surface stays under a color multiplier: halfway between the plain average and perceived
+     * luminance, so blue and green light (which look darker than their channel values) get more compensation.
+     */
+    private static float keptBrightness(float r, float g, float b) {
+        return 0.5f * (r + g + b) / 3f + 0.5f * (0.2126f * r + 0.7152f * g + 0.0722f * b);
     }
 
     private static float multiplier(int tint, float strength) {
@@ -211,10 +218,13 @@ public final class ColorSampler {
         private final FloatArrayList data = new FloatArrayList(); // x, y, z, level, falloff (1/k) per emitter
         private final IntArrayList colors = new IntArrayList();
 
-        /** Emitters that can light any point of the given block box (inclusive). Reads the level. */
-        public static Emitters around(Level level, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        /**
+         * Emitters that can light any point of the given block box (inclusive), with reach multiplied by up to
+         * {@code range} for emitters open to the sky. Reads the level.
+         */
+        public static Emitters around(Level level, int minX, int minY, int minZ, int maxX, int maxY, int maxZ, float range) {
             Emitters set = new Emitters();
-            float range = Math.max(1f, Config.objectLightRange);
+            range = Math.max(1f, range);
             int margin = (int) Math.ceil(15 * range) + 1;
             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             for (int sx = (minX - margin) >> 4; sx <= (maxX + margin) >> 4; sx++)
@@ -227,8 +237,8 @@ public final class ColorSampler {
                             if (c < 0) continue;
                             int p = EmitterTracker.localPos(e);
                             int x = (sx << 4) + (p >> 8), y = (sy << 4) + ((p >> 4) & 15), z = (sz << 4) + (p & 15);
-                            float openness = level.getBrightness(LightLayer.SKY, pos.set(x, y, z)) / 15f;
-                            float k = 1f + (range - 1f) * openness;
+                            float k = range <= 1f ? 1f
+                                    : 1f + (range - 1f) * level.getBrightness(LightLayer.SKY, pos.set(x, y, z)) / 15f;
                             set.data.add(x + 0.5f);
                             set.data.add(y + 0.5f);
                             set.data.add(z + 0.5f);
@@ -269,7 +279,7 @@ public final class ColorSampler {
         int bx = (int) Math.floor(x), by = (int) Math.floor(y), bz = (int) Math.floor(z);
         DynamicLights.Snapshot dynamic = DynamicLights.current();
         float dyn = dynamic.isEmpty() ? 0f : DynamicLights.levelAt(dynamic, (float) x, (float) y, (float) z, false);
-        return objectTint(level, x, y, z, Emitters.around(level, bx, by, bz, bx, by, bz), dyn, new float[5]);
+        return objectTint(level, x, y, z, Emitters.around(level, bx, by, bz, bx, by, bz, Config.objectLightRange), dyn, new float[5]);
     }
 
     /**

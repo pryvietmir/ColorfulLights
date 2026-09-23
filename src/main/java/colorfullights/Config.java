@@ -19,11 +19,11 @@ public class Config {
 
     private static final ModConfigSpec.DoubleValue SATURATION = BUILDER
             .comment("Multiplies the saturation of light colors (hue is kept). 1 = colors as sampled; higher = more vivid.")
-            .defineInRange("saturation", 4.0, 0.0, 10.0);
+            .defineInRange("saturation", 1.6, 0.0, 10.0);
 
     private static final ModConfigSpec.DoubleValue BRIGHTNESS = BUILDER
             .comment("Multiplies block light on terrain, so lights look brighter and reach further. 1 = vanilla.")
-            .defineInRange("brightness", 1.6, 1.0, 4.0);
+            .defineInRange("brightness", 1.2, 1.0, 4.0);
 
     private static final ModConfigSpec.DoubleValue SKY_REDUCTION = BUILDER
             .comment("How much sky light washes out the tint (0 = ignore sky light, 1 = no tint in full daylight).")
@@ -37,6 +37,10 @@ public class Config {
     private static final ModConfigSpec.BooleanValue DYNAMIC_LIGHTS = BUILDER
             .comment("Held and dropped light items, burning entities, blazes and Create contraption lamps emit light.")
             .define("dynamicLights", true);
+
+    private static final ModConfigSpec.BooleanValue TINT_ENTITIES = BUILDER
+            .comment("Tint mobs, players, items in hand, chests and other block entities, and particles with the light color.")
+            .define("tintEntities", true);
 
     private static final ModConfigSpec.BooleanValue TEXTURE_COLORS = BUILDER
             .comment("Derive each light's color from the glowing parts of its block textures.")
@@ -54,11 +58,12 @@ public class Config {
 
     public static volatile boolean enabled = true;
     public static volatile float intensity = 1.0f;
-    public static volatile float saturation = 4.0f;
-    public static volatile float brightness = 1.6f;
+    public static volatile float saturation = 1.6f;
+    public static volatile float brightness = 1.2f;
     public static volatile float skyReduction = 0.5f;
     public static volatile boolean dynamicLights = true;
     public static volatile float objectLightRange = 2.0f;
+    public static volatile boolean tintEntities = true;
 
     private static boolean isColor(Object o) {
         return o instanceof String s && LightColors.parseColor(s) >= 0;
@@ -84,7 +89,7 @@ public class Config {
     /** Invalidates the color table; ClientEvents rebuilds it and re-meshes chunks on the next tick. */
     private static synchronized void apply() {
         List<Object> values = List.of(ENABLED.get(), INTENSITY.get(), SATURATION.get(), BRIGHTNESS.get(), SKY_REDUCTION.get(),
-                DYNAMIC_LIGHTS.get(), OBJECT_LIGHT_RANGE.get(), TEXTURE_COLORS.get(), DEFAULT_COLOR.get(), List.copyOf(COLORS.get()));
+                DYNAMIC_LIGHTS.get(), OBJECT_LIGHT_RANGE.get(), TINT_ENTITIES.get(), TEXTURE_COLORS.get(), DEFAULT_COLOR.get(), List.copyOf(COLORS.get()));
         if (values.equals(applied)) return;
         applied = values;
 
@@ -95,6 +100,7 @@ public class Config {
         skyReduction = SKY_REDUCTION.get().floatValue();
         dynamicLights = DYNAMIC_LIGHTS.get();
         objectLightRange = OBJECT_LIGHT_RANGE.get().floatValue();
+        tintEntities = TINT_ENTITIES.get();
         LightColors.configure(COLORS.get(), LightColors.parseColor(DEFAULT_COLOR.get()), TEXTURE_COLORS.get());
     }
 }

@@ -2,6 +2,7 @@ package colorfullights.render;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import colorfullights.compat.SableCompat;
+import colorfullights.debug.Timings;
 import colorfullights.light.ColorSampler;
 import net.minecraft.core.SectionPos;
 
@@ -50,7 +51,9 @@ public final class VanillaTerrainTint {
 
         @Override
         public void addVertex(float x, float y, float z, int color, float u, float v, int overlay, int light, float nx, float ny, float nz) {
+            long start = Timings.start();
             long shaded = ColorSampler.shadeARGB(ox + x, oy + y, oz + z, color, light);
+            Timings.end(Timings.Part.MESH_SHADE, start);
             delegate.addVertex(x, y, z, ColorSampler.color(shaded), u, v, overlay, ColorSampler.light(shaded), nx, ny, nz);
         }
 

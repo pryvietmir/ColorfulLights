@@ -72,6 +72,10 @@ final class CreateContraptions {
         }
     }
 
+    static boolean isContraption(Entity entity) {
+        return entity instanceof AbstractContraptionEntity;
+    }
+
     static Vec3 toGlobal(Entity entity, Vec3 local, float partialTick) {
         return ((AbstractContraptionEntity) entity).toGlobalVector(local, partialTick);
     }

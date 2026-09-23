@@ -31,6 +31,10 @@ public final class CreateCompat {
         CreateContraptions.collectBounds(level, camera, range, out);
     }
 
+    public static boolean isContraption(Entity entity) {
+        return CreateContraptions.isContraption(entity);
+    }
+
     /** World position of a point given in a contraption's local space. */
     public static Vec3 toGlobal(Entity contraption, Vec3 local, float partialTick) {
         return CreateContraptions.toGlobal(contraption, local, partialTick);

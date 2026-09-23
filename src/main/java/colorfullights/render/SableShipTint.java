@@ -49,8 +49,9 @@ public final class SableShipTint {
             ivec3 cl_block = ivec3(floor(cl_world)) + ClCameraBlock;
             vec3 cl_texel = vec3(cl_block & ivec3(127, 63, 127)) + fract(cl_world);
             vec4 cl_cell = textureLod(ClTintGrid, cl_texel / vec3(128.0, 64.0, 128.0), 0.0);
-            // colored light darkens; make up for it with extra light (up to 2x), like terrain lighting does
-            float cl_boost = min(2.0, 3.0 / max(cl_cell.r + cl_cell.g + cl_cell.b, 0.001));
+            // colored light darkens; make up for it with extra light (up to 2.5x), like terrain lighting does
+            float cl_kept = 0.5 * (cl_cell.r + cl_cell.g + cl_cell.b) / 3.0 + 0.5 * dot(cl_cell.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float cl_boost = min(2.5, 1.0 / max(cl_kept, 0.001));
             float cl_blockLight = max(float(UV2.x), min(240.0, cl_cell.a * 240.0 * cl_boost));
             vec4 cl_oldLight = minecraft_sample_lightmap(Sampler2, UV2);
             vec4 cl_newLight = minecraft_sample_lightmap(Sampler2, ivec2(int(cl_blockLight), UV2.y));

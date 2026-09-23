@@ -1,10 +1,12 @@
 package colorfullights;
 
 import colorfullights.compat.SableCompat;
+import colorfullights.debug.Timings;
 import colorfullights.light.DynamicLights;
 import colorfullights.light.LightColors;
 import colorfullights.render.DynamicLightShader;
 import colorfullights.render.ObjectTintVolume;
+import colorfullights.render.WorldTint;
 import net.minecraft.client.Minecraft;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -45,6 +47,8 @@ final class ClientEvents {
         }
         DynamicLights.tick(mc);
         ObjectTintVolume.tick(mc);
+        WorldTint.clear();
+        Timings.tick();
     }
 
     static void onFrameStart(RenderFrameEvent.Pre event) {

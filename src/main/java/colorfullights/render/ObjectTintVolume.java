@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import colorfullights.Config;
 import colorfullights.compat.CreateCompat;
 import colorfullights.compat.SableCompat;
+import colorfullights.debug.Timings;
 import colorfullights.light.ColorSampler;
 import colorfullights.light.DynamicLights;
 import colorfullights.light.EmitterTracker;
@@ -70,6 +71,15 @@ public final class ObjectTintVolume {
     // --- per tick (client thread) ---
 
     public static void tick(Minecraft mc) {
+        long start = Timings.start();
+        try {
+            tickImpl(mc);
+        } finally {
+            Timings.end(Timings.Part.OBJECT_TINT, start);
+        }
+    }
+
+    private static void tickImpl(Minecraft mc) {
         boxCount = 0;
         if (!Config.enabled || mc.level == null || !LightColors.isReady() || !(CreateCompat.LOADED || SableCompat.LOADED)) {
             LAST_BOXES.clear();
@@ -121,7 +131,7 @@ public final class ObjectTintVolume {
 
     private static void compute(Level level, int[] box) {
         DynamicLights.Snapshot dynamic = DynamicLights.current();
-        ColorSampler.Emitters emitters = ColorSampler.Emitters.around(level, box[0], box[1], box[2], box[3], box[4], box[5]);
+        ColorSampler.Emitters emitters = ColorSampler.Emitters.around(level, box[0], box[1], box[2], box[3], box[4], box[5], Config.objectLightRange);
         float[] scratch = new float[5];
         for (int z = box[2]; z <= box[5]; z++) {
             for (int y = box[1]; y <= box[4]; y++) {

@@ -7,11 +7,15 @@
   "mixins": [
   ],
   "client": [
+    "BlockEntityRenderDispatcherMixin",
+    "EntityRenderDispatcherMixin",
     "EntityRendererMixin",
+    "ItemInHandRendererMixin",
     "LevelChunkMixin",
     "LevelRendererMixin",
     "ModelBlockRendererMixin",
     "SectionCompilerMixin",
+    "SingleQuadParticleMixin",
     "create.ContraptionEntityRendererMixin",
     "create.ContraptionVisualMixin",
     "flywheel.GlProgramMixin",

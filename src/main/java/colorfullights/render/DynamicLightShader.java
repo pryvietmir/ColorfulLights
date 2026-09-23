@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import colorfullights.ColorfulLights;
 import colorfullights.Config;
 import colorfullights.compat.IrisCompat;
+import colorfullights.debug.Timings;
 import colorfullights.light.DynamicLights;
 import colorfullights.light.LightVolume;
 import net.minecraft.client.Minecraft;
@@ -184,8 +185,8 @@ public final class DynamicLightShader {
                 float strength = u_DynParams.x * min(1.0, dyn * (2.5 / 15.0)) * (1.0 - u_DynParams.y * sky) * share;
                 vec3 mul = mix(vec3(1.0), tint, strength);
                 // colored light darkens; make up for it with extra light, like the baked lighting does
-                float kept = (mul.r + mul.g + mul.b) / 3.0;
-                float eff = max(base, min(15.0, dyn * min(2.0, 1.0 / max(kept, 1e-3))));
+                float kept = 0.5 * (mul.r + mul.g + mul.b) / 3.0 + 0.5 * dot(mul, vec3(0.2126, 0.7152, 0.0722));
+                float eff = max(base, min(15.0, dyn * min(2.5, 1.0 / max(kept, 1e-3))));
 
                 vec4 light = texture(u_LightTex, vec2(eff / 16.0, v_DynLight.y));
                 return vec4(v_DynBase.rgb * light.rgb * mul, lit.a);
@@ -198,7 +199,15 @@ public final class DynamicLightShader {
     static void prepare() {
         if (preparedFrame == frame) return;
         preparedFrame = frame;
+        long start = Timings.start();
+        try {
+            prepareFrame();
+        } finally {
+            Timings.end(Timings.Part.SHADER_FRAME, start);
+        }
+    }
 
+    private static void prepareFrame() {
         Minecraft mc = Minecraft.getInstance();
         count = 0;
         if (!Config.enabled || !Config.dynamicLights || mc.level == null) return;

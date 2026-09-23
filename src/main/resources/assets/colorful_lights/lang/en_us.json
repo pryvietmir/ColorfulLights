@@ -5,6 +5,7 @@
   "colorful_lights.configuration.brightness": "Light brightness",
   "colorful_lights.configuration.dynamicLights": "Dynamic lights",
   "colorful_lights.configuration.objectLightRange": "Light reach on ships & contraptions",
+  "colorful_lights.configuration.tintEntities": "Tint mobs, items and particles",
   "colorful_lights.configuration.textureColors": "Colors from textures",
   "colorful_lights.configuration.skyReduction": "Sky light wash-out",
   "colorful_lights.configuration.defaultColor": "Default light color",

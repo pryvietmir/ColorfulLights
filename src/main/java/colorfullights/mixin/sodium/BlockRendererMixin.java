@@ -1,5 +1,6 @@
 package colorfullights.mixin.sodium;
 
+import colorfullights.debug.Timings;
 import colorfullights.light.ColorSampler;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.pipeline.BlockRenderer;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexEncoder;
@@ -43,10 +44,12 @@ public abstract class BlockRendererMixin {
     )
     private void colorful_lights$tint(CallbackInfo ci) {
         if (this.colorful_lights$skip) return;
+        long start = Timings.start();
         for (ChunkVertexEncoder.Vertex v : this.vertices) {
             long shaded = ColorSampler.shadeABGR(v.x + colorful_lights$dx, v.y + colorful_lights$dy, v.z + colorful_lights$dz, v.color, v.light);
             v.color = ColorSampler.color(shaded);
             v.light = ColorSampler.light(shaded);
         }
+        Timings.end(Timings.Part.MESH_SHADE, start);
     }
 }

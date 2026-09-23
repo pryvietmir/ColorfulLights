@@ -39,6 +39,8 @@ neoForge {
         clientWorld {
             client()
             programArguments.addAll '--quickPlaySingleplayer', 'New World'
+            // log how much time each part of the mod takes, every 10 seconds
+            systemProperty 'colorful_lights.timings', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
@@ -98,8 +100,9 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 
 dependencies {
-    // Sodium (optional at runtime). Its NeoForge jar only nests the real mod jar via JarJar,
-    // so we compile against the extracted jars in ./libs. For testing, the full jar sits in run/mods.
+    // Optional integrations (Sodium, Create/Flywheel, Sable/Veil) are compiled against jars in ./libs,
+    // fetched with `gradlew fetchLibs`: their NeoForge jars nest the real jars via JarJar, and there are no
+    // maven artifacts for 1.21.1. For testing in game, put the full mod jars into run/mods.
     compileOnly fileTree(dir: 'libs', include: '*.jar')
 
     // Example mod dependency with JEI
@@ -169,5 +172,57 @@ idea {
     module {
         downloadSources = true
         downloadJavadoc = true
+    }
+}
+
+// Downloads the mod jars the optional integrations compile against into ./libs.
+// `keep`: also copy the downloaded jar itself; `nested`: name prefixes of JarJar'd jars to extract
+// (nested jars are searched recursively, e.g. Veil inside Sable).
+def libSources = [
+        [url   : 'https://api.modrinth.com/maven/maven/modrinth/sodium/mc1.21.1-0.8.13-neoforge/sodium-mc1.21.1-0.8.13-neoforge.jar',
+         keep  : false,
+         nested: ['net.caffeinemc.sodium-neoforge-', 'fabric-']],
+        [url   : 'https://cdn.modrinth.com/data/LNytGWDc/versions/UjX6dr61/create-1.21.1-6.0.10.jar',
+         keep  : true,
+         nested: ['flywheel-neoforge-']],
+        [url   : 'https://cdn.modrinth.com/data/T9PomCSv/versions/U678xqle/sable-neoforge-1.21.1-2.0.5.jar',
+         keep  : true,
+         nested: ['sable-companion-', 'veil-neoforge-', 'glsl-processor-']],
+]
+
+tasks.register('fetchLibs') {
+    group = 'setup'
+    description = 'Downloads the jars of optional mod integrations into ./libs'
+    notCompatibleWithConfigurationCache('downloads files and inspects archives at execution time')
+    doLast {
+        def libsDir = file('libs')
+        def tmp = layout.buildDirectory.dir('tmp/fetchLibs').get().asFile
+        libsDir.mkdirs()
+        tmp.mkdirs()
+        libSources.each { src ->
+            def name = src.url.substring(src.url.lastIndexOf('/') + 1)
+            def downloaded = new File(tmp, name)
+            if (!downloaded.exists()) {
+                logger.lifecycle("Downloading ${name}")
+                ant.get(src: src.url, dest: downloaded)
+            }
+            if (src.keep) project.copy { from downloaded; into libsDir }
+            def pending = [downloaded]
+            while (!pending.isEmpty()) {
+                def jar = pending.remove(0)
+                def extractDir = new File(tmp, "${jar.name}-nested")
+                project.copy {
+                    from(project.zipTree(jar)) { include 'META-INF/jarjar/*.jar' }
+                    into extractDir
+                    eachFile { it.path = it.name }
+                    includeEmptyDirs = false
+                }
+                extractDir.listFiles()?.findAll { f -> src.nested.any { f.name.startsWith(it) } }?.each { f ->
+                    project.copy { from f; into libsDir }
+                    pending.add(f)
+                }
+            }
+        }
+        logger.lifecycle("libs: ${libsDir.list().sort().join(', ')}")
     }
 }
