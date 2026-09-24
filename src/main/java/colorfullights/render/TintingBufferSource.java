@@ -1,5 +1,6 @@
 package colorfullights.render;
 
+import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -20,19 +21,30 @@ public final class TintingBufferSource implements MultiBufferSource {
 
     @Override
     public VertexConsumer getBuffer(RenderType type) {
-        return new Consumer(delegate.getBuffer(type), camera);
+        return new Consumer(delegate, type, camera);
     }
 
+    /** Refreshes an ended buffer like {@link TintedVertexConsumer} does, see there. */
     private static final class Consumer implements VertexConsumer {
-        private final VertexConsumer delegate;
+        private final MultiBufferSource source;
+        private final RenderType type;
+        private VertexConsumer delegate;
         private final double cx, cy, cz;
         private float x, y, z;
 
-        Consumer(VertexConsumer delegate, Vec3 camera) {
-            this.delegate = delegate;
+        Consumer(MultiBufferSource source, RenderType type, Vec3 camera) {
+            this.source = source;
+            this.type = type;
+            this.delegate = source.getBuffer(type);
             this.cx = camera.x;
             this.cy = camera.y;
             this.cz = camera.z;
+        }
+
+        private void refresh() {
+            if (delegate instanceof BufferBuilder builder && !builder.building) {
+                delegate = source.getBuffer(type);
+            }
         }
 
         private int tint() {
@@ -41,6 +53,7 @@ public final class TintingBufferSource implements MultiBufferSource {
 
         @Override
         public void addVertex(float x, float y, float z, int color, float u, float v, int overlay, int light, float nx, float ny, float nz) {
+            refresh();
             this.x = x;
             this.y = y;
             this.z = z;
@@ -53,6 +66,7 @@ public final class TintingBufferSource implements MultiBufferSource {
 
         @Override
         public VertexConsumer addVertex(float x, float y, float z) {
+            refresh();
             this.x = x;
             this.y = y;
             this.z = z;

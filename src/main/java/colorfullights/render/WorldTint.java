@@ -59,7 +59,7 @@ public final class WorldTint {
     /** Wraps a buffer source so everything drawn into it is tinted with the light color at a position. */
     public static MultiBufferSource wrap(MultiBufferSource buffers, double x, double y, double z) {
         int tint = at(x, y, z);
-        return tint == WHITE ? buffers : type -> new TintedVertexConsumer().set(buffers.getBuffer(type), tint);
+        return tint == WHITE ? buffers : type -> new TintedVertexConsumer().set(buffers, type, tint);
     }
 
     /** Wraps a particle's vertex consumer; the returned consumer is reused for the next particle. */
