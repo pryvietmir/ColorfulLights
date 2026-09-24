@@ -76,6 +76,8 @@ public final class DynamicLights {
         public byte[] vis;
         public int ox, oy, oz;
         int vx = Integer.MIN_VALUE, vy, vz;
+        /** Block the light was in at the last tick. */
+        int bx = Integer.MIN_VALUE, by, bz;
         boolean volumeDirty = true;
 
         Source(long key, Positioner positioner) {
@@ -216,7 +218,7 @@ public final class DynamicLights {
 
         if (!Config.enabled || !Config.dynamicLights || mc.level == null || !LightColors.isReady()) {
             if (!SOURCES.isEmpty()) {
-                if (baked) SOURCES.values().forEach(s -> addReach(s, dirtySections));
+                if (baked) SOURCES.values().forEach(s -> addReach(s, dirtySections, s.bx, s.by, s.bz));
                 SOURCES.clear();
                 publish(mc, dirtySections);
             }
@@ -234,7 +236,7 @@ public final class DynamicLights {
 
         boolean changed = SOURCES.values().removeIf(s -> {
             if (s.seen) return false;
-            if (baked) addReach(s, dirtySections);
+            if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
             return true;
         });
 
@@ -242,16 +244,28 @@ public final class DynamicLights {
         for (Source s : SOURCES.values()) {
             Vec3 p = s.tickPosition();
             int bx = (int) Math.floor(p.x), by = (int) Math.floor(p.y), bz = (int) Math.floor(p.z);
-            if (baked && (bx != s.vx || by != s.vy || bz != s.vz)) addReach(s, dirtySections); // old position
+            if (bx != s.bx || by != s.by || bz != s.bz) {
+                // moved to another block: publish the new position; baked meshes around both positions rebuild
+                if (baked) {
+                    addReach(s, dirtySections, s.bx, s.by, s.bz);
+                    addReach(s, dirtySections, bx, by, bz);
+                }
+                s.bx = bx;
+                s.by = by;
+                s.bz = bz;
+                changed = true;
+            }
             s.x = p.x;
             s.y = p.y;
             s.z = p.z;
-            if (bx != s.vx || by != s.vy || bz != s.vz) s.volumeDirty = true;
+            // Which cells a light sees barely changes over one block, so the (costly) visibility volume is only
+            // recomputed once the light is 2 blocks from where it was computed.
+            if (Math.max(Math.abs(bx - s.vx), Math.max(Math.abs(by - s.vy), Math.abs(bz - s.vz))) >= 2) s.volumeDirty = true;
             if (s.volumeDirty) pending.add(s);
             if (s.lightChanged) {
                 s.lightChanged = false;
                 changed = true;
-                if (baked) addReach(s, dirtySections);
+                if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
             }
         }
 
@@ -269,7 +283,7 @@ public final class DynamicLights {
             s.vy = by;
             s.vz = bz;
             s.volumeDirty = false;
-            if (baked) addReach(s, dirtySections); // new position
+            if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
             changed = true;
         }
 
@@ -307,11 +321,10 @@ public final class DynamicLights {
         }
     }
 
-    /** Adds the chunk sections a (baked) light currently reaches. */
-    private static void addReach(Source s, LongSet sections) {
-        if (s.vis == null) return;
+    /** Adds the chunk sections a (baked) light reaches from block (x, y, z). */
+    private static void addReach(Source s, LongSet sections, int x, int y, int z) {
+        if (s.vis == null || x == Integer.MIN_VALUE) return;
         int r = s.level;
-        int x = s.vx, y = s.vy, z = s.vz;
         for (int sx = (x - r) >> 4; sx <= (x + r) >> 4; sx++)
             for (int sy = (y - r) >> 4; sy <= (y + r) >> 4; sy++)
                 for (int sz = (z - r) >> 4; sz <= (z + r) >> 4; sz++)

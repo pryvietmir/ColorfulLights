@@ -283,6 +283,19 @@ public final class ColorSampler {
     }
 
     /**
+     * Light a moving object gets at a world position: color multiplier in the low 24 bits and block light level
+     * (0..15, times 16) in bits 24-31. Like {@link #objectTint(Level, double, double, double)}; any thread.
+     */
+    public static long objectLight(Level level, double x, double y, double z) {
+        int bx = (int) Math.floor(x), by = (int) Math.floor(y), bz = (int) Math.floor(z);
+        DynamicLights.Snapshot dynamic = DynamicLights.current();
+        float dyn = dynamic.isEmpty() ? 0f : DynamicLights.levelAt(dynamic, (float) x, (float) y, (float) z, false);
+        float[] scratch = new float[5];
+        int tint = objectTint(level, x, y, z, Emitters.around(level, bx, by, bz, bx, by, bz, Config.objectLightRange), dyn, scratch);
+        return (long) Math.min(255, Math.round(scratch[4] * 16f)) << 24 | tint;
+    }
+
+    /**
      * Light color multiplier for something small in the world (entity, particle, block entity) at a block center,
      * with light reaching it like it reaches blocks. Allocation-free; {@code scratch} is a reusable float[5].
      */

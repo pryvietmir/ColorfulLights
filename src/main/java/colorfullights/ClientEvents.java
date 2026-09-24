@@ -1,5 +1,6 @@
 package colorfullights;
 
+import colorfullights.compat.IrisCompat;
 import colorfullights.compat.SableCompat;
 import colorfullights.debug.Timings;
 import colorfullights.light.DynamicLights;
@@ -34,12 +35,14 @@ final class ClientEvents {
 
     static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
+        IrisCompat.update();
         boolean inShader = DynamicLightShader.updateActive();
         if (inShader != wasInShader) {
             // e.g. an Iris shader pack was toggled: chunk meshes must gain or lose baked dynamic light
             wasInShader = inShader;
             DynamicLights.reset();
             if (mc.level != null) mc.levelRenderer.allChanged();
+            if (SableCompat.LOADED) SableCompat.rebuildShips();
         }
         if (!LightColors.isReady() && mc.getOverlay() == null) {
             LightColors.rebuild();
@@ -47,6 +50,7 @@ final class ClientEvents {
         }
         DynamicLights.tick(mc);
         ObjectTintVolume.tick(mc);
+        if (SableCompat.LOADED) SableCompat.tickBakedShips(IrisCompat.shaderPackActive());
         WorldTint.clear();
         Timings.tick();
     }

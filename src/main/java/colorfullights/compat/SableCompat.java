@@ -50,6 +50,21 @@ public final class SableCompat {
         return SableSubLevels.isPlotSection(pos);
     }
 
+    /** World light for a plot section's mesh, or null if the section isn't on a sub-level. Meshing threads. */
+    public static colorfullights.render.VanillaTerrainTint.PlotLight plotLight(SectionPos pos) {
+        return SableShipBake.plotLight(pos);
+    }
+
+    /** Rebuilds ship meshes whose baked world light is out of date (shader pack mode). Client thread. */
+    public static void tickBakedShips(boolean shaderPack) {
+        SableShipBake.tick(shaderPack);
+    }
+
+    /** Rebuilds all ship meshes, e.g. when a shader pack is switched on or off. Client thread. */
+    public static void rebuildShips() {
+        SableShipBake.rebuildAll();
+    }
+
     /** A block changed somewhere; if it's on a sub-level, that sub-level's lights are rescanned. */
     public static void onBlockChanged(BlockPos pos) {
         SableSubLevels.onBlockChanged(pos);

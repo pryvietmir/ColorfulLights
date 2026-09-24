@@ -18,6 +18,8 @@ public final class IrisCompat {
     public static final boolean LOADED = ModList.get().isLoaded("iris");
 
     private static final MethodHandle SHADER_PACK_IN_USE = lookup();
+    /** {@link #isShaderPackInUse()} as of the last client tick, safe to read from any thread. */
+    private static volatile boolean active;
 
     private IrisCompat() {
     }
@@ -34,6 +36,16 @@ public final class IrisCompat {
             ColorfulLights.LOGGER.warn("Iris is installed but its API could not be accessed; assuming no shader pack", e);
             return null;
         }
+    }
+
+    /** Refreshes {@link #shaderPackActive()}; called once per client tick. */
+    public static void update() {
+        active = isShaderPackInUse();
+    }
+
+    /** Whether a shader pack was active at the last client tick. Cheap and thread-safe. */
+    public static boolean shaderPackActive() {
+        return active;
     }
 
     /** True while an Iris shader pack is active. */
