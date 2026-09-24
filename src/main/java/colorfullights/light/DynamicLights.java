@@ -9,6 +9,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.entity.Entity;
@@ -32,6 +33,7 @@ import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -96,6 +98,39 @@ public final class DynamicLights {
     }
 
     private static final Long2ObjectOpenHashMap<Source> SOURCES = new Long2ObjectOpenHashMap<>();
+
+    // --- extension point for other mods ---
+
+    /**
+     * Adds light for an entity near the camera, next to the built-in sources. Use entity light indexes of 2 and up
+     * (0 and 1 are the held item and fire / glowing mobs).
+     */
+    @FunctionalInterface
+    public interface EntityProvider {
+        void collect(Entity entity, Collector collector);
+    }
+
+    /**
+     * Adds light that isn't tied to an entity, once per tick after the entity pass. Keys must have the sign bit set
+     * (see {@link Collector#add(long, java.util.function.Supplier, int, int)}).
+     */
+    @FunctionalInterface
+    public interface LevelProvider {
+        void collect(ClientLevel level, Vec3 camera, double range, Collector collector);
+    }
+
+    private static final List<EntityProvider> ENTITY_PROVIDERS = new CopyOnWriteArrayList<>();
+    private static final List<LevelProvider> LEVEL_PROVIDERS = new CopyOnWriteArrayList<>();
+
+    /** Registers extra per-entity light sources. Client side, e.g. from FMLClientSetupEvent. */
+    public static void addEntityProvider(EntityProvider provider) {
+        ENTITY_PROVIDERS.add(provider);
+    }
+
+    /** Registers extra light sources that aren't entities. Client side, e.g. from FMLClientSetupEvent. */
+    public static void addLevelProvider(LevelProvider provider) {
+        LEVEL_PROVIDERS.add(provider);
+    }
 
     /** Immutable view of the current sources for other threads. */
     public static final class Snapshot {
@@ -231,8 +266,10 @@ public final class DynamicLights {
             if (entity.distanceToSqr(cam) > RANGE * RANGE) continue;
             collect(entity, COLLECTOR);
             if (CreateCompat.LOADED) CreateCompat.collect(entity, COLLECTOR);
+            for (EntityProvider provider : ENTITY_PROVIDERS) provider.collect(entity, COLLECTOR);
         }
         if (SableCompat.LOADED) SableCompat.collect(mc.level, cam, RANGE, COLLECTOR);
+        for (LevelProvider provider : LEVEL_PROVIDERS) provider.collect(mc.level, cam, RANGE, COLLECTOR);
 
         boolean changed = SOURCES.values().removeIf(s -> {
             if (s.seen) return false;
