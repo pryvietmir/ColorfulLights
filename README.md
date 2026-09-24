@@ -22,6 +22,14 @@ and modded light sources are picked up automatically.
 - **Iris.** Works with shader packs: colored terrain light is kept, and dynamic lights fall back to being baked
   into chunks (they then move block by block).
 
+## Known limitations
+
+- Light colors blend by distance to the light, so a color can reach a surface lit by a different light on the
+  other side of a thin wall.
+- With a shader pack, dynamic lights and ships' lighting update in steps (baked into meshes) instead of smoothly.
+- Block entities drawn by Flywheel (e.g. chests and bells when Create is installed) are not tinted.
+- Shader packs on integrated graphics need a lot of memory; together with large modpacks, keep an eye on RAM.
+
 ## Requirements
 
 - Minecraft 1.21.1, NeoForge 21.1+
