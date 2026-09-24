@@ -38,15 +38,15 @@ final class ClientEvents {
         IrisCompat.update();
         boolean inShader = DynamicLightShader.updateActive();
         if (inShader != wasInShader) {
-            // e.g. an Iris shader pack was toggled: chunk meshes must gain or lose baked dynamic light
+            // e.g. an Iris shader pack was toggled: meshes around dynamic lights must gain or lose baked light.
+            // Only those sections are rebuilt; a full rebuild on top of Iris' own reload doubles the memory peak.
             wasInShader = inShader;
-            DynamicLights.reset();
-            if (mc.level != null) mc.levelRenderer.allChanged();
+            DynamicLights.onRenderModeChanged(mc);
             if (SableCompat.LOADED) SableCompat.rebuildShips();
         }
         if (!LightColors.isReady() && mc.getOverlay() == null) {
-            LightColors.rebuild();
-            if (mc.level != null) mc.levelRenderer.allChanged();
+            // after a resource reload the world is re-meshed anyway; only re-mesh if colors actually changed
+            if (LightColors.rebuild() && mc.level != null) mc.levelRenderer.allChanged();
         }
         DynamicLights.tick(mc);
         ObjectTintVolume.tick(mc);

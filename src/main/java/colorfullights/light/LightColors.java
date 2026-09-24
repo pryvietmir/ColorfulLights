@@ -69,6 +69,7 @@ public final class LightColors {
         overrides = map;
         defaultColor = defColor < 0 ? 0xFFFFFF : defColor;
         useTextures = fromTextures;
+        remeshRequested = true;
         invalidate();
     }
 
@@ -88,8 +89,18 @@ public final class LightColors {
         return stateId >= 0 && stateId < table.length ? table[stateId] : defaultColor;
     }
 
-    /** Builds the table. Must run on the client thread with resources fully loaded. */
-    public static void rebuild() {
+    /** The last table built, kept to tell whether a rebuild changed any color. */
+    private static int[] lastBuilt;
+    /** Set when settings that affect tinting changed, so meshes are rebuilt even if the colors didn't. */
+    private static volatile boolean remeshRequested;
+
+    /**
+     * Builds the table. Must run on the client thread with resources fully loaded.
+     *
+     * @return whether chunk meshes need rebuilding: a color differs from the previous table, or tint settings
+     * changed since the last rebuild
+     */
+    public static boolean rebuild() {
         long start = System.nanoTime();
         int[] table = new int[Block.BLOCK_STATE_REGISTRY.size()];
         Arrays.fill(table, defaultColor);
@@ -116,10 +127,14 @@ public final class LightColors {
                 table[Block.getId(state)] = color;
             }
         }
+        boolean changed = !Arrays.equals(table, lastBuilt) || remeshRequested;
+        remeshRequested = false;
+        lastBuilt = table;
         byStateId = table;
         EmitterTracker.invalidateCaches();
         ColorfulLights.LOGGER.info("Computed light colors for {} emitting block states ({} textures) in {} ms",
                 emitters, spriteCache.size(), (System.nanoTime() - start) / 1_000_000);
+        return changed;
     }
 
     // --- texture sampling ---

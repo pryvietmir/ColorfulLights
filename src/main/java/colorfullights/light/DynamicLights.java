@@ -301,6 +301,16 @@ public final class DynamicLights {
         }
     }
 
+    /**
+     * Dynamic light switched between being drawn by the shader and being baked into meshes: rebuilds the chunk
+     * sections the current lights reach, so baked light is added or removed there.
+     */
+    public static void onRenderModeChanged(Minecraft mc) {
+        LongSet sections = new LongOpenHashSet();
+        for (Source s : SOURCES.values()) addReach(s, sections, s.bx, s.by, s.bz);
+        publish(mc, sections);
+    }
+
     public static void reset() {
         SOURCES.clear();
         current = EMPTY;
