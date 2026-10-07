@@ -9,9 +9,13 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
+import colorfullights.ColorfulLights;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -42,7 +46,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * (Create Aeronautics ships).
  * <p>
  * Light falls off with straight-line distance (a sphere, not vanilla's diamond) and is blocked by walls using a
- * per-source {@link LightVolume}. With Sodium the terrain is lit per pixel in the chunk shader every frame
+ * per-source {@link LightVolume}. A source may also be a spot light that only shines into a cone (a flashlight:
+ * light items tagged {@link #FLASHLIGHTS} held by an entity shine where it looks). With Sodium the terrain is lit per pixel in the chunk shader every frame
  * ({@link DynamicLightShader}), so lights move smoothly without re-meshing. Without Sodium, dynamic light is
  * baked into chunk meshes, which are rebuilt when a light moves to another block.
  * <p>
@@ -54,7 +59,19 @@ public final class DynamicLights {
     /** Visibility volumes recomputed per tick at most; the nearest lights go first. */
     private static final int VOLUME_BUDGET = 6;
 
-    /** Where a light source is at a given partial tick. */
+    /** Held light items in this tag shine as a cone in the holder's view direction instead of all around. */
+    public static final TagKey<Item> FLASHLIGHTS = TagKey.create(Registries.ITEM,
+            ResourceLocation.fromNamespaceAndPath(ColorfulLights.MODID, "flashlights"));
+    /** Half angles (degrees) of a held flashlight's cone: full light inside the inner one, none outside the outer. */
+    private static final float FLASHLIGHT_INNER = 12f, FLASHLIGHT_OUTER = 28f;
+    /** Color of flashlight items that aren't light blocks. */
+    private static final int FLASHLIGHT_COLOR = 0xFFF2DC;
+    /** A spot light that turned further than this (cosine, ~8 degrees) is published again (baked: re-meshed). */
+    private static final float SPOT_TURN = 0.99f;
+    /** Cone cosines of a light that shines all around (smoothstep(-2, -1, c) = 1 for any c). */
+    private static final float NO_CONE_INNER = -1f, NO_CONE_OUTER = -2f;
+
+    /** Where a light source is (or, for a spot light's direction, where it points) at a given partial tick. */
     @FunctionalInterface
     public interface Positioner {
         Vec3 at(float partialTick);
@@ -63,7 +80,11 @@ public final class DynamicLights {
     /** A light source, persistent across ticks. Client thread only. */
     public static final class Source {
         public final long key;
-        final Positioner positioner;
+        Positioner positioner;
+        /** Unit direction of a spot light, or null for a light shining all around. */
+        Positioner direction;
+        /** Cosines of the cone's half angles: full light inside cosInner, none outside cosOuter. */
+        public float cosInner = NO_CONE_INNER, cosOuter = NO_CONE_OUTER;
         public int level;
         /** Saturated light color (brightest channel = 255), or -1 if unknown. */
         public int color;
@@ -73,6 +94,9 @@ public final class DynamicLights {
 
         /** Position at the last tick. */
         double x, y, z;
+        /** Spot direction at the last tick, and the one last published. */
+        float dx, dy, dz;
+        float pdx, pdy, pdz;
 
         /** Visibility volume, its origin block, and the block it was computed for. */
         public byte[] vis;
@@ -94,6 +118,15 @@ public final class DynamicLights {
 
         Vec3 tickPosition() {
             return framePosition(1f);
+        }
+
+        public boolean isSpot() {
+            return direction != null;
+        }
+
+        /** Interpolated unit direction of a spot light for the current frame. */
+        public Vec3 frameDirection(float partialTick) {
+            return direction.at(partialTick);
         }
     }
 
@@ -140,9 +173,13 @@ public final class DynamicLights {
         final int[] color;
         final byte[][] vis;
         final int[] origin;   // ox, oy, oz per source
+        final float[] dir;    // spot direction x, y, z per source (0 if none)
+        final float[] cone;   // cosInner, cosOuter per source
 
         Snapshot(List<Source> sources) {
             count = sources.size();
+            dir = new float[count * 3];
+            cone = new float[count * 2];
             pos = new float[count * 3];
             level = new int[count];
             color = new int[count];
@@ -159,6 +196,11 @@ public final class DynamicLights {
                 origin[i * 3] = s.ox;
                 origin[i * 3 + 1] = s.oy;
                 origin[i * 3 + 2] = s.oz;
+                dir[i * 3] = s.dx;
+                dir[i * 3 + 1] = s.dy;
+                dir[i * 3 + 2] = s.dz;
+                cone[i * 2] = s.cosInner;
+                cone[i * 2 + 1] = s.cosOuter;
             }
         }
 
@@ -221,7 +263,53 @@ public final class DynamicLights {
         }
 
         public void add(long key, java.util.function.Supplier<Positioner> positioner, int rgb, int lightLevel) {
-            if (lightLevel <= 0) return;
+            Source s = put(key, positioner, rgb, lightLevel);
+            if (s != null && s.direction != null) {
+                // was a spot light under the same key (e.g. the held item changed)
+                s.positioner = positioner.get();
+                s.direction = null;
+                s.cosInner = NO_CONE_INNER;
+                s.cosOuter = NO_CONE_OUTER;
+                s.dx = s.dy = s.dz = 0f;
+                s.lightChanged = true;
+            }
+        }
+
+        /** A spot light carried by an entity: from its eyes, in its view direction. */
+        public void addSpot(Entity entity, int index, BlockState colorSource, int lightLevel, float innerDegrees, float outerDegrees) {
+            addSpot(entity, index, LightColors.colorOf(Block.getId(colorSource)), lightLevel, innerDegrees, outerDegrees);
+        }
+
+        public void addSpot(Entity entity, int index, int rgb, int lightLevel, float innerDegrees, float outerDegrees) {
+            addSpot((long) entity.getId() << 8 | index, () -> entity::getEyePosition, () -> entity::getViewVector,
+                    rgb, lightLevel, innerDegrees, outerDegrees);
+        }
+
+        /**
+         * A spot light: full light within {@code innerDegrees} of its direction, fading out towards
+         * {@code outerDegrees} (half angles). The direction positioner must return unit vectors; like the position
+         * positioner it is only created for new sources (or when a plain light under the same key becomes a spot).
+         */
+        public void addSpot(long key, java.util.function.Supplier<Positioner> positioner, java.util.function.Supplier<Positioner> direction,
+                            int rgb, int lightLevel, float innerDegrees, float outerDegrees) {
+            boolean existed = SOURCES.containsKey(key);
+            Source s = put(key, positioner, rgb, lightLevel);
+            if (s == null) return;
+            if (s.direction == null) {
+                if (existed) s.positioner = positioner.get(); // was a plain light, positioned elsewhere
+                s.direction = direction.get();
+                s.lightChanged = true;
+            }
+            float outer = Math.max(innerDegrees + 0.5f, outerDegrees);
+            float cosInner = (float) Math.cos(Math.toRadians(Math.max(0f, innerDegrees)));
+            float cosOuter = (float) Math.cos(Math.toRadians(Math.min(180f, outer)));
+            if (cosInner != s.cosInner || cosOuter != s.cosOuter) s.lightChanged = true;
+            s.cosInner = cosInner;
+            s.cosOuter = cosOuter;
+        }
+
+        private Source put(long key, java.util.function.Supplier<Positioner> positioner, int rgb, int lightLevel) {
+            if (lightLevel <= 0) return null;
             Source s = SOURCES.get(key);
             if (s == null) SOURCES.put(key, s = new Source(key, positioner.get()));
             int level = Math.min(15, lightLevel);
@@ -231,6 +319,7 @@ public final class DynamicLights {
             s.level = level;
             s.color = color;
             s.seen = true;
+            return s;
         }
     }
 
@@ -295,6 +384,20 @@ public final class DynamicLights {
             s.x = p.x;
             s.y = p.y;
             s.z = p.z;
+            if (s.direction != null) {
+                Vec3 d = s.direction.at(1f);
+                s.dx = (float) d.x;
+                s.dy = (float) d.y;
+                s.dz = (float) d.z;
+                if (s.dx * s.pdx + s.dy * s.pdy + s.dz * s.pdz < SPOT_TURN) {
+                    // turned: entity lighting (and baked meshes) follow the cone in steps
+                    s.pdx = s.dx;
+                    s.pdy = s.dy;
+                    s.pdz = s.dz;
+                    changed = true;
+                    if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
+                }
+            }
             // Which cells a light sees barely changes over one block, so the (costly) visibility volume is only
             // recomputed once the light is 2 blocks from where it was computed.
             if (Math.max(Math.abs(bx - s.vx), Math.max(Math.abs(by - s.vy), Math.abs(bz - s.vz))) >= 2) s.volumeDirty = true;
@@ -382,11 +485,19 @@ public final class DynamicLights {
 
     private static void collect(Entity entity, Collector c) {
         if (entity instanceof LivingEntity living) {
-            BlockState main = heldLight(living.getMainHandItem());
-            BlockState off = heldLight(living.getOffhandItem());
-            BlockState held = main == null ? off : off == null ? main
-                    : main.getLightEmission() >= off.getLightEmission() ? main : off;
-            if (held != null) c.add(entity, 0, held, held.getLightEmission());
+            ItemStack mainStack = living.getMainHandItem(), offStack = living.getOffhandItem();
+            ItemStack flashlight = mainStack.is(FLASHLIGHTS) ? mainStack : offStack.is(FLASHLIGHTS) ? offStack : null;
+            if (flashlight != null) {
+                BlockState s = heldLight(flashlight);
+                if (s != null) c.addSpot(entity, 0, s, s.getLightEmission(), FLASHLIGHT_INNER, FLASHLIGHT_OUTER);
+                else c.addSpot(entity, 0, FLASHLIGHT_COLOR, 15, FLASHLIGHT_INNER, FLASHLIGHT_OUTER);
+            } else {
+                BlockState main = heldLight(mainStack);
+                BlockState off = heldLight(offStack);
+                BlockState held = main == null ? off : off == null ? main
+                        : main.getLightEmission() >= off.getLightEmission() ? main : off;
+                if (held != null) c.add(entity, 0, held, held.getLightEmission());
+            }
         } else if (entity instanceof ItemEntity item) {
             BlockState s = heldLight(item.getItem());
             if (s != null) c.add(entity, 0, s, s.getLightEmission());
@@ -447,7 +558,7 @@ public final class DynamicLights {
         for (int i = 0; i < s.count; i++) {
             float d2 = distanceSq(s, i, x, y, z);
             if (d2 >= s.level[i] * s.level[i]) continue;
-            float lv = s.level[i] - (float) Math.sqrt(d2);
+            float lv = (s.level[i] - (float) Math.sqrt(d2)) * cone(s, i, x, y, z, d2);
             if (lv <= best) continue;
             lv *= visibility(s, i, x, y, z, corner);
             if (lv > best) best = lv;
@@ -470,7 +581,8 @@ public final class DynamicLights {
             float reach = s.level[i] + 0.5f;
             float d2 = distanceSq(s, i, x, y, z);
             if (d2 >= reach * reach) continue;
-            float v = reach - (float) Math.sqrt(d2);
+            float v = (reach - (float) Math.sqrt(d2)) * cone(s, i, x, y, z, d2);
+            if (v <= 0f) continue;
             v *= visibility(s, i, x, y, z, corner);
             if (v <= 0f) continue;
             float w = v * v;
@@ -484,6 +596,23 @@ public final class DynamicLights {
     private static float distanceSq(Snapshot s, int i, float x, float y, float z) {
         float dx = x - s.pos[i * 3], dy = y - s.pos[i * 3 + 1], dz = z - s.pos[i * 3 + 2];
         return dx * dx + dy * dy + dz * dz;
+    }
+
+    /**
+     * How much of a spot light reaches a position by its angle off the light's direction (1 for plain lights).
+     * Same as in the Sodium shader: smoothstep(cosOuter, cosInner, cos angle).
+     */
+    private static float cone(Snapshot s, int i, float x, float y, float z, float d2) {
+        float cosOuter = s.cone[i * 2 + 1];
+        if (cosOuter < -1f) return 1f;
+        float cosInner = s.cone[i * 2];
+        float c = 1f;
+        if (d2 > 1e-8f) {
+            float dx = x - s.pos[i * 3], dy = y - s.pos[i * 3 + 1], dz = z - s.pos[i * 3 + 2];
+            c = (dx * s.dir[i * 3] + dy * s.dir[i * 3 + 1] + dz * s.dir[i * 3 + 2]) / (float) Math.sqrt(d2);
+        }
+        float t = Math.max(0f, Math.min(1f, (c - cosOuter) / (cosInner - cosOuter)));
+        return t * t * (3f - 2f * t);
     }
 
     private static float visibility(Snapshot s, int i, float x, float y, float z, boolean corner) {

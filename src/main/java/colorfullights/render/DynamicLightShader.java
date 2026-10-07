@@ -26,7 +26,8 @@ import java.util.List;
  * <p>
  * The chunk shaders are patched (see {@link #patch}) to evaluate up to {@link #MAX_LIGHTS} lights per fragment:
  * light level falls off with straight-line distance from the light's exact, per-frame interpolated position, and
- * is multiplied by the light's visibility volume (walls), sampled from a 3D texture with linear filtering.
+ * is multiplied by the light's visibility volume (walls), sampled from a 3D texture with linear filtering, and for
+ * spot lights by a smooth falloff across the edge of their cone.
  * Nothing is baked into meshes, so lights move smoothly without rebuilding chunks.
  * <p>
  * The visibility of each light is stored in its own 32-deep slab of one 32×32×(32·MAX_LIGHTS) R8 texture.
@@ -52,6 +53,7 @@ public final class DynamicLightShader {
     static final float[] POSITIONS = new float[MAX_LIGHTS * 4];
     static final float[] COLORS = new float[MAX_LIGHTS * 4];
     static final float[] VOLUMES = new float[MAX_LIGHTS * 4];
+    static final float[] DIRECTIONS = new float[MAX_LIGHTS * 4];
     static final float[] PARAMS = new float[4];
 
     // per-frame scratch
@@ -144,7 +146,8 @@ public final class DynamicLightShader {
             uniform int u_DynCount;
             uniform vec4 u_DynPos[MAX_LIGHTS];    // xyz: camera-relative light position, w: light level
             uniform vec4 u_DynColor[MAX_LIGHTS];  // rgb: light color (brightest channel = 1), w: volume slab
-            uniform vec4 u_DynVolume[MAX_LIGHTS]; // xyz: camera-relative origin of the visibility volume
+            uniform vec4 u_DynVolume[MAX_LIGHTS]; // xyz: camera-relative origin of the visibility volume, w: cos of the outer cone
+            uniform vec4 u_DynDir[MAX_LIGHTS];    // xyz: spot light direction, w: cos of the inner cone (plain light: 0, -1; outer -2)
             uniform vec4 u_DynParams;             // x: intensity, y: sky reduction, z: brightness
             uniform sampler3D u_DynVis;
             uniform sampler2D u_LightTex;
@@ -162,7 +165,13 @@ public final class DynamicLightShader {
                 vec3 colorSum = vec3(0.0);
                 float weightSum = 0.0;
                 for (int i = 0; i < u_DynCount; i++) {
-                    float lv = u_DynPos[i].w - distance(v_DynPos, u_DynPos[i].xyz);
+                    vec3 toFrag = v_DynPos - u_DynPos[i].xyz;
+                    float dist = length(toFrag);
+                    float lv = u_DynPos[i].w - dist;
+                    if (lv <= 0.0) continue;
+                    // spot cone; for plain lights smoothstep(-2, -1, c) = 1
+                    float c = dist > 1e-4 ? dot(toFrag, u_DynDir[i].xyz) / dist : 1.0;
+                    lv *= smoothstep(u_DynVolume[i].w, u_DynDir[i].w, c);
                     if (lv <= 0.0) continue;
                     vec3 cell = clamp(samplePos - u_DynVolume[i].xyz, vec3(0.5), vec3(31.5));
                     lv *= texture(u_DynVis, vec3(cell.xy / 32.0, (u_DynColor[i].w * 32.0 + cell.z) / (32.0 * MAX_LIGHTS.0))).r;
@@ -294,7 +303,16 @@ public final class DynamicLightShader {
             VOLUMES[i] = (float) (s.ox - cam.x);
             VOLUMES[i + 1] = (float) (s.oy - cam.y);
             VOLUMES[i + 2] = (float) (s.oz - cam.z);
-            VOLUMES[i + 3] = 0f;
+            if (s.isSpot()) {
+                Vec3 d = s.frameDirection(pt);
+                DIRECTIONS[i] = (float) d.x;
+                DIRECTIONS[i + 1] = (float) d.y;
+                DIRECTIONS[i + 2] = (float) d.z;
+            } else {
+                DIRECTIONS[i] = DIRECTIONS[i + 1] = DIRECTIONS[i + 2] = 0f;
+            }
+            DIRECTIONS[i + 3] = s.cosInner;
+            VOLUMES[i + 3] = s.cosOuter;
         }
         PARAMS[0] = Config.intensity;
         PARAMS[1] = Config.skyReduction;
