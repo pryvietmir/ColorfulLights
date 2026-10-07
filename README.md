@@ -13,9 +13,10 @@ and modded light sources are picked up automatically.
 - **Smooth dynamic lights.** Held and dropped light items, burning entities, blazes, fireballs and glow squids emit
   colored light. With Sodium it is computed per pixel every frame: it moves smoothly, spreads as a sphere and stops
   at walls, without rebuilding chunks.
-- **Flashlights.** Light items in the item tag `colorful_lights:flashlights` shine as a cone where their holder
-  looks instead of all around (for now the tag holds the lantern). Other mods can add spot lights through
-  `DynamicLights.Collector.addSpot`.
+- **Directional lamps.** Headlights and similar lamps of other mods shine as a cone up to 40 blocks along their
+  facing, stopped by walls (a shadow map of the cone), also on moving Create contraptions and Aeronautics ships.
+  Where a placed lamp's beam hits, the server adds real (invisible) block light. Supported: Create: Bells &
+  Whistles headlight. Other mods can add spot lights through `DynamicLights.Collector.addSpot`.
 - **Tinted entities.** Mobs, players, items in hand, chests, signs and particles take the color of the light they
   are in.
 - **Create.** Lamps on moving contraptions light the world around them, and contraptions are tinted block by block

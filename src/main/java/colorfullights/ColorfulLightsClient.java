@@ -1,7 +1,9 @@
 package colorfullights;
 
 import colorfullights.compat.SableCompat;
+import colorfullights.light.DynamicLights;
 import colorfullights.light.EmitterTracker;
+import colorfullights.light.LampLights;
 import colorfullights.network.DarknessSettings;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
@@ -29,6 +31,8 @@ public class ColorfulLightsClient {
         NeoForge.EVENT_BUS.addListener(EmitterTracker::onChunkUnload);
         NeoForge.EVENT_BUS.addListener(EmitterTracker::onLevelUnload);
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> DarknessSettings.reset());
+
+        DynamicLights.addLevelProvider(LampLights::collect);
 
         if (SableCompat.LOADED) SableCompat.registerShaderHooks();
     }

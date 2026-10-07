@@ -5,6 +5,8 @@
   "plugin": "colorfullights.mixin.ColorfulLightsMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "BlockStateBaseAccessor",
+    "LevelChunkLampMixin"
   ],
   "client": [
     "BlockEntityRenderDispatcherMixin",

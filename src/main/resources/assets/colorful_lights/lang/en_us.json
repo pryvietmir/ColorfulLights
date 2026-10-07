@@ -18,5 +18,6 @@
   "colorful_lights.configuration.nether": "In the Nether",
   "colorful_lights.configuration.end": "In the End",
   "colorful_lights.configuration.otherDimensions": "In other dimensions",
-  "colorful_lights.configuration.excludedDimensions": "Dimensions without darkness"
+  "colorful_lights.configuration.excludedDimensions": "Dimensions without darkness",
+  "block.colorful_lights.beam_light": "Beam Light"
 }

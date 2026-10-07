@@ -3,6 +3,7 @@ package colorfullights.compat;
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
 import com.simibubi.create.content.contraptions.Contraption;
 import colorfullights.light.DynamicLights;
+import colorfullights.light.LampLights;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -59,6 +60,8 @@ final class CreateContraptions {
             long key = 1L << 62 | ((long) entity.getId() & 0x3FFFFFFFFL) << 24
                     | (p.getX() & 0xFFL) << 16 | (p.getY() & 0xFFL) << 8 | (p.getZ() & 0xFFL);
             Vec3 local = e.local();
+            // directional lamps (headlights) shine along the contraption's turn
+            if (LampLights.addMoving(collector, key, local, e.state(), (v, pt) -> toGlobal(entity, v, pt))) continue;
             collector.add(key, () -> pt -> toGlobal(entity, local, pt), e.state(), e.state().getLightEmission());
         }
     }

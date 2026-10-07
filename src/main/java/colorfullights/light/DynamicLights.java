@@ -9,13 +9,9 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
-import colorfullights.ColorfulLights;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.tags.TagKey;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -46,8 +42,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * (Create Aeronautics ships).
  * <p>
  * Light falls off with straight-line distance (a sphere, not vanilla's diamond) and is blocked by walls using a
- * per-source {@link LightVolume}. A source may also be a spot light that only shines into a cone (a flashlight:
- * light items tagged {@link #FLASHLIGHTS} held by an entity shine where it looks). With Sodium the terrain is lit per pixel in the chunk shader every frame
+ * per-source {@link LightVolume}. A source may also be a spot light that only shines into a cone (directional lamps
+ * such as headlights, see {@link colorfullights.DirectionalLamps}). Spot lights may reach further than
+ * the 32³ visibility volume (a range above their level, e.g. spotlight blocks); they use a {@link SpotDepth} shadow
+ * map instead and fade linearly over their range. With Sodium the terrain is lit per pixel in the chunk shader every frame
  * ({@link DynamicLightShader}), so lights move smoothly without re-meshing. Without Sodium, dynamic light is
  * baked into chunk meshes, which are rebuilt when a light moves to another block.
  * <p>
@@ -59,15 +57,14 @@ public final class DynamicLights {
     /** Visibility volumes recomputed per tick at most; the nearest lights go first. */
     private static final int VOLUME_BUDGET = 6;
 
-    /** Held light items in this tag shine as a cone in the holder's view direction instead of all around. */
-    public static final TagKey<Item> FLASHLIGHTS = TagKey.create(Registries.ITEM,
-            ResourceLocation.fromNamespaceAndPath(ColorfulLights.MODID, "flashlights"));
-    /** Half angles (degrees) of a held flashlight's cone: full light inside the inner one, none outside the outer. */
-    private static final float FLASHLIGHT_INNER = 12f, FLASHLIGHT_OUTER = 28f;
-    /** Color of flashlight items that aren't light blocks. */
-    private static final int FLASHLIGHT_COLOR = 0xFFF2DC;
-    /** A spot light that turned further than this (cosine, ~8 degrees) is published again (baked: re-meshed). */
+    /** A spot light that turned further than this (cosine, ~2 degrees) is published again (entity lighting). */
+    private static final float SPOT_PUBLISH = 0.9994f;
+    /** A spot light that turned further than this (cosine, ~8 degrees) is re-meshed when baked. */
     private static final float SPOT_TURN = 0.99f;
+    /** A long-range spot light that turned further than this (cosine, ~1 degree) recomputes its shadow map. */
+    private static final float SPOT_DEPTH_TURN = 0.99985f;
+    /** Spot lights also light everything within about this many blocks around them, whatever the direction. */
+    private static final float SPOT_SPILL = 1.5f;
     /** Cone cosines of a light that shines all around (smoothstep(-2, -1, c) = 1 for any c). */
     private static final float NO_CONE_INNER = -1f, NO_CONE_OUTER = -2f;
 
@@ -85,6 +82,15 @@ public final class DynamicLights {
         Positioner direction;
         /** Cosines of the cone's half angles: full light inside cosInner, none outside cosOuter. */
         public float cosInner = NO_CONE_INNER, cosOuter = NO_CONE_OUTER;
+        /** Reach in blocks of a long-range spot light (light fades linearly to 0 there), or 0: reach = level. */
+        public float range;
+        /** Tangent of the outer half angle of a long-range spot light. */
+        public float tanOuter;
+        /** Shadow map of a long-range spot light (instead of {@link #vis}), and the basis of its rays. */
+        public short[] depth;
+        float[] basis;
+        /** Direction the shadow map was computed for. */
+        float ddx, ddy, ddz;
         public int level;
         /** Saturated light color (brightest channel = 255), or -1 if unknown. */
         public int color;
@@ -94,9 +100,10 @@ public final class DynamicLights {
 
         /** Position at the last tick. */
         double x, y, z;
-        /** Spot direction at the last tick, and the one last published. */
+        /** Spot direction at the last tick, the one last published, and the one last baked into meshes. */
         float dx, dy, dz;
         float pdx, pdy, pdz;
+        float bdx, bdy, bdz;
 
         /** Visibility volume, its origin block, and the block it was computed for. */
         public byte[] vis;
@@ -122,6 +129,21 @@ public final class DynamicLights {
 
         public boolean isSpot() {
             return direction != null;
+        }
+
+        /** A spot light reaching further than its visibility volume would: lit through its {@link #depth} map. */
+        public boolean isLongSpot() {
+            return range > 0f;
+        }
+
+        /** Whether the light's visibility (volume or shadow map) has been computed, so it can be drawn. */
+        public boolean isReady() {
+            return vis != null || depth != null;
+        }
+
+        /** How far the light reaches, in blocks. */
+        float reach() {
+            return range > 0f ? range : level;
         }
 
         /** Interpolated unit direction of a spot light for the current frame. */
@@ -175,9 +197,17 @@ public final class DynamicLights {
         final int[] origin;   // ox, oy, oz per source
         final float[] dir;    // spot direction x, y, z per source (0 if none)
         final float[] cone;   // cosInner, cosOuter per source
+        final float[] range;  // long-range spot lights: reach (0 for others)
+        final float[] tanOuter;
+        final short[][] depth;
+        final float[][] basis;
 
         Snapshot(List<Source> sources) {
             count = sources.size();
+            range = new float[count];
+            tanOuter = new float[count];
+            depth = new short[count][];
+            basis = new float[count][];
             dir = new float[count * 3];
             cone = new float[count * 2];
             pos = new float[count * 3];
@@ -201,6 +231,12 @@ public final class DynamicLights {
                 dir[i * 3 + 2] = s.dz;
                 cone[i * 2] = s.cosInner;
                 cone[i * 2 + 1] = s.cosOuter;
+                if (s.depth != null) {
+                    range[i] = s.range;
+                    tanOuter[i] = s.tanOuter;
+                    depth[i] = s.depth;
+                    basis[i] = s.basis;
+                }
             }
         }
 
@@ -271,6 +307,7 @@ public final class DynamicLights {
                 s.cosInner = NO_CONE_INNER;
                 s.cosOuter = NO_CONE_OUTER;
                 s.dx = s.dy = s.dz = 0f;
+                if (s.range > 0f) setRange(s, 0f, 0f);
                 s.lightChanged = true;
             }
         }
@@ -292,6 +329,16 @@ public final class DynamicLights {
          */
         public void addSpot(long key, java.util.function.Supplier<Positioner> positioner, java.util.function.Supplier<Positioner> direction,
                             int rgb, int lightLevel, float innerDegrees, float outerDegrees) {
+            addSpot(key, positioner, direction, rgb, lightLevel, innerDegrees, outerDegrees, 0f);
+        }
+
+        /**
+         * A spot light reaching {@code range} blocks: its light fades linearly from {@code lightLevel} at the light to
+         * 0 there, and walls are found by a {@link SpotDepth} shadow map. A range up to the light level is an
+         * ordinary spot light. The outer angle of long-range spot lights is limited to 75 degrees.
+         */
+        public void addSpot(long key, java.util.function.Supplier<Positioner> positioner, java.util.function.Supplier<Positioner> direction,
+                            int rgb, int lightLevel, float innerDegrees, float outerDegrees, float range) {
             boolean existed = SOURCES.containsKey(key);
             Source s = put(key, positioner, rgb, lightLevel);
             if (s == null) return;
@@ -306,6 +353,20 @@ public final class DynamicLights {
             if (cosInner != s.cosInner || cosOuter != s.cosOuter) s.lightChanged = true;
             s.cosInner = cosInner;
             s.cosOuter = cosOuter;
+            float r = range > s.level ? range : 0f;
+            float tan = r > 0f ? (float) Math.tan(Math.toRadians(Math.min(75f, outer))) : 0f;
+            if (r != s.range || tan != s.tanOuter) setRange(s, r, tan);
+        }
+
+        /** Switches a source between volume and shadow map lighting; its visibility is computed anew. */
+        private static void setRange(Source s, float range, float tanOuter) {
+            s.range = range;
+            s.tanOuter = tanOuter;
+            s.vis = null;
+            s.depth = null;
+            s.basis = null;
+            s.volumeDirty = true;
+            s.lightChanged = true;
         }
 
         private Source put(long key, java.util.function.Supplier<Positioner> positioner, int rgb, int lightLevel) {
@@ -389,18 +450,26 @@ public final class DynamicLights {
                 s.dx = (float) d.x;
                 s.dy = (float) d.y;
                 s.dz = (float) d.z;
-                if (s.dx * s.pdx + s.dy * s.pdy + s.dz * s.pdz < SPOT_TURN) {
-                    // turned: entity lighting (and baked meshes) follow the cone in steps
+                if (s.dx * s.pdx + s.dy * s.pdy + s.dz * s.pdz < SPOT_PUBLISH) {
+                    // turned: entity lighting follows the cone in small steps
                     s.pdx = s.dx;
                     s.pdy = s.dy;
                     s.pdz = s.dz;
                     changed = true;
-                    if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
                 }
+                if (baked && s.dx * s.bdx + s.dy * s.bdy + s.dz * s.bdz < SPOT_TURN) {
+                    // baked meshes follow in bigger steps
+                    s.bdx = s.dx;
+                    s.bdy = s.dy;
+                    s.bdz = s.dz;
+                    addReach(s, dirtySections, s.bx, s.by, s.bz);
+                }
+                if (s.isLongSpot() && s.dx * s.ddx + s.dy * s.ddy + s.dz * s.ddz < SPOT_DEPTH_TURN) s.volumeDirty = true;
             }
             // Which cells a light sees barely changes over one block, so the (costly) visibility volume is only
-            // recomputed once the light is 2 blocks from where it was computed.
-            if (Math.max(Math.abs(bx - s.vx), Math.max(Math.abs(by - s.vy), Math.abs(bz - s.vz))) >= 2) s.volumeDirty = true;
+            // recomputed once the light is 2 blocks from where it was computed (a shadow map: 1 block).
+            int moved = Math.max(Math.abs(bx - s.vx), Math.max(Math.abs(by - s.vy), Math.abs(bz - s.vz)));
+            if (moved >= (s.isLongSpot() ? 1 : 2)) s.volumeDirty = true;
             if (s.volumeDirty) pending.add(s);
             if (s.lightChanged) {
                 s.lightChanged = false;
@@ -414,7 +483,15 @@ public final class DynamicLights {
             Source s = pending.get(i);
             int bx = (int) Math.floor(s.x), by = (int) Math.floor(s.y), bz = (int) Math.floor(s.z);
             long volumeStart = Timings.start();
-            s.vis = LightVolume.compute(mc.level, bx, by, bz, s.level);
+            if (s.isLongSpot()) {
+                s.depth = SpotDepth.compute(mc.level, s.x, s.y, s.z, s.dx, s.dy, s.dz, s.tanOuter, s.range);
+                s.basis = SpotDepth.basis(s.dx, s.dy, s.dz);
+                s.ddx = s.dx;
+                s.ddy = s.dy;
+                s.ddz = s.dz;
+            } else {
+                s.vis = LightVolume.compute(mc.level, bx, by, bz, s.level);
+            }
             Timings.end(Timings.Part.LIGHT_VOLUME, volumeStart);
             s.ox = bx - LightVolume.CENTER;
             s.oy = by - LightVolume.CENTER;
@@ -433,6 +510,12 @@ public final class DynamicLights {
     /** Called from the client thread when a block changes: lights that can see it recompute their volume. */
     public static void onBlockChanged(BlockPos pos) {
         for (Source s : SOURCES.values()) {
+            if (s.depth != null) {
+                double dx = pos.getX() + 0.5 - s.x, dy = pos.getY() + 0.5 - s.y, dz = pos.getZ() + 0.5 - s.z;
+                double r = s.range + 1;
+                if (dx * dx + dy * dy + dz * dz < r * r && dx * s.dx + dy * s.dy + dz * s.dz > -1) s.volumeDirty = true;
+                continue;
+            }
             if (s.vis == null) continue;
             int x = pos.getX() - s.ox, y = pos.getY() - s.oy, z = pos.getZ() - s.oz;
             if (x >= 0 && y >= 0 && z >= 0 && x < LightVolume.SIZE && y < LightVolume.SIZE && z < LightVolume.SIZE) {
@@ -460,7 +543,7 @@ public final class DynamicLights {
     private static void publish(Minecraft mc, LongSet dirtySections) {
         List<Source> ready = new ArrayList<>();
         for (Source s : SOURCES.values()) {
-            if (s.vis != null) ready.add(s);
+            if (s.isReady()) ready.add(s);
         }
         current = ready.isEmpty() ? EMPTY : new Snapshot(ready);
         VERSION.incrementAndGet();
@@ -473,8 +556,8 @@ public final class DynamicLights {
 
     /** Adds the chunk sections a (baked) light reaches from block (x, y, z). */
     private static void addReach(Source s, LongSet sections, int x, int y, int z) {
-        if (s.vis == null || x == Integer.MIN_VALUE) return;
-        int r = s.level;
+        if (!s.isReady() || x == Integer.MIN_VALUE) return;
+        int r = (int) Math.ceil(s.reach());
         for (int sx = (x - r) >> 4; sx <= (x + r) >> 4; sx++)
             for (int sy = (y - r) >> 4; sy <= (y + r) >> 4; sy++)
                 for (int sz = (z - r) >> 4; sz <= (z + r) >> 4; sz++)
@@ -485,19 +568,11 @@ public final class DynamicLights {
 
     private static void collect(Entity entity, Collector c) {
         if (entity instanceof LivingEntity living) {
-            ItemStack mainStack = living.getMainHandItem(), offStack = living.getOffhandItem();
-            ItemStack flashlight = mainStack.is(FLASHLIGHTS) ? mainStack : offStack.is(FLASHLIGHTS) ? offStack : null;
-            if (flashlight != null) {
-                BlockState s = heldLight(flashlight);
-                if (s != null) c.addSpot(entity, 0, s, s.getLightEmission(), FLASHLIGHT_INNER, FLASHLIGHT_OUTER);
-                else c.addSpot(entity, 0, FLASHLIGHT_COLOR, 15, FLASHLIGHT_INNER, FLASHLIGHT_OUTER);
-            } else {
-                BlockState main = heldLight(mainStack);
-                BlockState off = heldLight(offStack);
-                BlockState held = main == null ? off : off == null ? main
-                        : main.getLightEmission() >= off.getLightEmission() ? main : off;
-                if (held != null) c.add(entity, 0, held, held.getLightEmission());
-            }
+            BlockState main = heldLight(living.getMainHandItem());
+            BlockState off = heldLight(living.getOffhandItem());
+            BlockState held = main == null ? off : off == null ? main
+                    : main.getLightEmission() >= off.getLightEmission() ? main : off;
+            if (held != null) c.add(entity, 0, held, held.getLightEmission());
         } else if (entity instanceof ItemEntity item) {
             BlockState s = heldLight(item.getItem());
             if (s != null) c.add(entity, 0, s, s.getLightEmission());
@@ -557,8 +632,10 @@ public final class DynamicLights {
         float best = 0f;
         for (int i = 0; i < s.count; i++) {
             float d2 = distanceSq(s, i, x, y, z);
-            if (d2 >= s.level[i] * s.level[i]) continue;
-            float lv = (s.level[i] - (float) Math.sqrt(d2)) * cone(s, i, x, y, z, d2);
+            float reach = s.range[i] > 0f ? s.range[i] : s.level[i];
+            if (d2 >= reach * reach) continue;
+            float dist = (float) Math.sqrt(d2);
+            float lv = (s.range[i] > 0f ? s.level[i] * (1f - dist / s.range[i]) : s.level[i] - dist) * cone(s, i, x, y, z, dist);
             if (lv <= best) continue;
             lv *= visibility(s, i, x, y, z, corner);
             if (lv > best) best = lv;
@@ -578,10 +655,11 @@ public final class DynamicLights {
         for (int i = 0; i < s.count; i++) {
             int rgb = s.color[i];
             if (rgb < 0) continue;
-            float reach = s.level[i] + 0.5f;
+            float reach = s.range[i] > 0f ? s.range[i] : s.level[i] + 0.5f;
             float d2 = distanceSq(s, i, x, y, z);
             if (d2 >= reach * reach) continue;
-            float v = (reach - (float) Math.sqrt(d2)) * cone(s, i, x, y, z, d2);
+            float dist = (float) Math.sqrt(d2);
+            float v = (s.range[i] > 0f ? s.level[i] * (1f - dist / s.range[i]) + 0.5f : reach - dist) * cone(s, i, x, y, z, dist);
             if (v <= 0f) continue;
             v *= visibility(s, i, x, y, z, corner);
             if (v <= 0f) continue;
@@ -600,22 +678,28 @@ public final class DynamicLights {
 
     /**
      * How much of a spot light reaches a position by its angle off the light's direction (1 for plain lights).
-     * Same as in the Sodium shader: smoothstep(cosOuter, cosInner, cos angle).
+     * Same as in the Sodium shader: smoothstep(cosOuter, cosInner, cos angle), but at least the spill right around
+     * the light (so whoever holds a flashlight, and what touches it, isn't lit by chance of the angle).
      */
-    private static float cone(Snapshot s, int i, float x, float y, float z, float d2) {
+    private static float cone(Snapshot s, int i, float x, float y, float z, float dist) {
         float cosOuter = s.cone[i * 2 + 1];
         if (cosOuter < -1f) return 1f;
         float cosInner = s.cone[i * 2];
         float c = 1f;
-        if (d2 > 1e-8f) {
+        if (dist > 1e-4f) {
             float dx = x - s.pos[i * 3], dy = y - s.pos[i * 3 + 1], dz = z - s.pos[i * 3 + 2];
-            c = (dx * s.dir[i * 3] + dy * s.dir[i * 3 + 1] + dz * s.dir[i * 3 + 2]) / (float) Math.sqrt(d2);
+            c = (dx * s.dir[i * 3] + dy * s.dir[i * 3 + 1] + dz * s.dir[i * 3 + 2]) / dist;
         }
         float t = Math.max(0f, Math.min(1f, (c - cosOuter) / (cosInner - cosOuter)));
-        return t * t * (3f - 2f * t);
+        float spill = Math.max(0f, Math.min(1f, (SPOT_SPILL - dist) / (SPOT_SPILL - 0.5f)));
+        return Math.max(t * t * (3f - 2f * t), spill);
     }
 
     private static float visibility(Snapshot s, int i, float x, float y, float z, boolean corner) {
+        if (s.depth[i] != null) {
+            return SpotDepth.sample(s.depth[i], s.basis[i], s.tanOuter[i], s.range[i],
+                    s.pos[i * 3], s.pos[i * 3 + 1], s.pos[i * 3 + 2], s.dir[i * 3], s.dir[i * 3 + 1], s.dir[i * 3 + 2], x, y, z);
+        }
         byte[] vis = s.vis[i];
         int ox = s.origin[i * 3], oy = s.origin[i * 3 + 1], oz = s.origin[i * 3 + 2];
         if (!corner) {

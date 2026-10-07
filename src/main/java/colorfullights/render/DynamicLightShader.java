@@ -7,6 +7,7 @@ import colorfullights.compat.IrisCompat;
 import colorfullights.debug.Timings;
 import colorfullights.light.DynamicLights;
 import colorfullights.light.LightVolume;
+import colorfullights.light.SpotDepth;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.opengl.GL11;
@@ -30,13 +31,17 @@ import java.util.List;
  * spot lights by a smooth falloff across the edge of their cone.
  * Nothing is baked into meshes, so lights move smoothly without rebuilding chunks.
  * <p>
- * The visibility of each light is stored in its own 32-deep slab of one 32×32×(32·MAX_LIGHTS) R8 texture.
+ * The visibility of each light is stored in its own 32-deep slab of one 32×32×(32·MAX_LIGHTS) R8 texture. Long-range
+ * spot lights use a shadow map instead ({@link SpotDepth}), in their own 32-high slab of one 32×(32·MAX_LIGHTS) R16
+ * texture.
  * Render thread only.
  */
 public final class DynamicLightShader {
     public static final int MAX_LIGHTS = 16;
     /** Texture unit for the visibility volume (a 3D target, so it doesn't clash with 2D textures on the unit). */
     public static final int TEXTURE_UNIT = 4;
+    /** Texture unit for the spot light shadow maps. */
+    public static final int DEPTH_TEXTURE_UNIT = 5;
 
     private static volatile boolean vertexPatched, fragmentPatched;
     /** Cached result of {@link #updateActive()}; read from chunk meshing threads. */
@@ -46,6 +51,9 @@ public final class DynamicLightShader {
     private static final DynamicLights.Source[] SLABS = new DynamicLights.Source[MAX_LIGHTS];
     private static final byte[][] UPLOADED = new byte[MAX_LIGHTS][];
     private static ByteBuffer uploadBuffer;
+    private static int depthTexture;
+    private static final short[][] UPLOADED_DEPTH = new short[MAX_LIGHTS][];
+    private static java.nio.ShortBuffer depthUploadBuffer;
 
     private static long preparedFrame = -1;
     private static long frame;
@@ -54,6 +62,7 @@ public final class DynamicLightShader {
     static final float[] COLORS = new float[MAX_LIGHTS * 4];
     static final float[] VOLUMES = new float[MAX_LIGHTS * 4];
     static final float[] DIRECTIONS = new float[MAX_LIGHTS * 4];
+    static final float[] SPOTS = new float[MAX_LIGHTS * 4];
     static final float[] PARAMS = new float[4];
 
     // per-frame scratch
@@ -133,7 +142,8 @@ public final class DynamicLightShader {
             return null;
         }
         return src
-                .replace(decl, decl + "\n" + FRAGMENT_LIGHTING.replace("MAX_LIGHTS", Integer.toString(MAX_LIGHTS)))
+                .replace(decl, decl + "\n" + FRAGMENT_LIGHTING.replace("MAX_LIGHTS", Integer.toString(MAX_LIGHTS))
+                        .replace("SPOT_RES", Integer.toString(SpotDepth.RES)))
                 .replace(apply, "color *= _dyn_light(v_Color); // Apply per-vertex color modulator + dynamic lights");
     }
 
@@ -148,9 +158,26 @@ public final class DynamicLightShader {
             uniform vec4 u_DynColor[MAX_LIGHTS];  // rgb: light color (brightest channel = 1), w: volume slab
             uniform vec4 u_DynVolume[MAX_LIGHTS]; // xyz: camera-relative origin of the visibility volume, w: cos of the outer cone
             uniform vec4 u_DynDir[MAX_LIGHTS];    // xyz: spot light direction, w: cos of the inner cone (plain light: 0, -1; outer -2)
+            uniform vec4 u_DynSpot[MAX_LIGHTS];   // x: range of a long-range spot light (0: reach = level), y: shadow map slab (-1: none), z: tan of the outer half angle
             uniform vec4 u_DynParams;             // x: intensity, y: sky reduction, z: brightness
             uniform sampler3D u_DynVis;
+            uniform sampler2D u_DynDepth;
             uniform sampler2D u_LightTex;
+
+            // Shadow map of a long-range spot light (see SpotDepth): 1 in front of the first wall towards p.
+            float _dyn_shadow(int i, vec3 p) {
+                vec3 dir = u_DynDir[i].xyz;
+                vec3 v = p - u_DynPos[i].xyz;
+                float fwd = dot(v, dir);
+                if (fwd <= 1e-4) return 0.0;
+                vec3 right = normalize(cross(dir, abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+                vec3 up = cross(right, dir);
+                vec2 uv = vec2(dot(v, right), dot(v, up)) / (fwd * u_DynSpot[i].z);
+                if (abs(uv.x) > 1.0 || abs(uv.y) > 1.0) return 0.0;
+                vec2 t = clamp(uv * 0.5 + 0.5, vec2(0.5 / SPOT_RES.0), vec2(1.0 - 0.5 / SPOT_RES.0));
+                float d = texture(u_DynDepth, vec2(t.x, (u_DynSpot[i].y + t.y) / MAX_LIGHTS.0)).r * u_DynSpot[i].x;
+                return clamp(d + 0.75 - length(v), 0.0, 1.0);
+            }
 
             vec4 _dyn_light(vec4 lit) {
                 if (u_DynCount == 0) return lit;
@@ -167,14 +194,19 @@ public final class DynamicLightShader {
                 for (int i = 0; i < u_DynCount; i++) {
                     vec3 toFrag = v_DynPos - u_DynPos[i].xyz;
                     float dist = length(toFrag);
-                    float lv = u_DynPos[i].w - dist;
+                    float range = u_DynSpot[i].x;
+                    float lv = range > 0.0 ? u_DynPos[i].w * (1.0 - dist / range) : u_DynPos[i].w - dist;
                     if (lv <= 0.0) continue;
-                    // spot cone; for plain lights smoothstep(-2, -1, c) = 1
+                    // spot cone (for plain lights smoothstep(-2, -1, c) = 1), and the spill right around the light
                     float c = dist > 1e-4 ? dot(toFrag, u_DynDir[i].xyz) / dist : 1.0;
-                    lv *= smoothstep(u_DynVolume[i].w, u_DynDir[i].w, c);
+                    lv *= max(smoothstep(u_DynVolume[i].w, u_DynDir[i].w, c), clamp(1.5 - dist, 0.0, 1.0));
                     if (lv <= 0.0) continue;
-                    vec3 cell = clamp(samplePos - u_DynVolume[i].xyz, vec3(0.5), vec3(31.5));
-                    lv *= texture(u_DynVis, vec3(cell.xy / 32.0, (u_DynColor[i].w * 32.0 + cell.z) / (32.0 * MAX_LIGHTS.0))).r;
+                    if (u_DynSpot[i].y >= 0.0) {
+                        lv *= _dyn_shadow(i, samplePos);
+                    } else {
+                        vec3 cell = clamp(samplePos - u_DynVolume[i].xyz, vec3(0.5), vec3(31.5));
+                        lv *= texture(u_DynVis, vec3(cell.xy / 32.0, (u_DynColor[i].w * 32.0 + cell.z) / (32.0 * MAX_LIGHTS.0))).r;
+                    }
                     if (lv <= 0.0) continue;
                     level = max(level, lv);
                     float w = lv * lv;
@@ -228,7 +260,7 @@ public final class DynamicLightShader {
         List<DynamicLights.Source> candidates = CANDIDATES;
         candidates.clear();
         for (DynamicLights.Source s : DynamicLights.sources()) {
-            if (s.vis != null && s.level > 0 && s.color >= 0) candidates.add(s);
+            if (s.isReady() && s.level > 0 && s.color >= 0) candidates.add(s);
         }
         int m = candidates.size();
         if (FRAME_POS.length < m) {
@@ -277,6 +309,7 @@ public final class DynamicLightShader {
                     used[slab] = true;
                     SLABS[slab] = candidates.get(k);
                     UPLOADED[slab] = null;
+                    UPLOADED_DEPTH[slab] = null;
                     break;
                 }
             }
@@ -287,7 +320,12 @@ public final class DynamicLightShader {
             DynamicLights.Source s = candidates.get(k);
             Vec3 p = FRAME_POS[k];
             int slab = slabOf[k];
-            if (UPLOADED[slab] != s.vis) {
+            if (s.depth != null) {
+                if (UPLOADED_DEPTH[slab] != s.depth) {
+                    uploadDepth(slab, s.depth);
+                    UPLOADED_DEPTH[slab] = s.depth;
+                }
+            } else if (UPLOADED[slab] != s.vis) {
                 upload(slab, s.vis);
                 UPLOADED[slab] = s.vis;
             }
@@ -313,6 +351,11 @@ public final class DynamicLightShader {
             }
             DIRECTIONS[i + 3] = s.cosInner;
             VOLUMES[i + 3] = s.cosOuter;
+            boolean shadowMap = s.depth != null;
+            SPOTS[i] = shadowMap ? s.range : 0f;
+            SPOTS[i + 1] = shadowMap ? slab : -1f;
+            SPOTS[i + 2] = shadowMap ? s.tanOuter : 0f;
+            SPOTS[i + 3] = 0f;
         }
         PARAMS[0] = Config.intensity;
         PARAMS[1] = Config.skyReduction;
@@ -320,12 +363,14 @@ public final class DynamicLightShader {
         PARAMS[3] = 0f;
     }
 
-    /** Binds the visibility texture to {@link #TEXTURE_UNIT}. */
+    /** Binds the visibility texture to {@link #TEXTURE_UNIT} and the shadow maps to {@link #DEPTH_TEXTURE_UNIT}. */
     static void bindTexture() {
         if (texture == 0) return;
         int previous = GlStateManager._getActiveTexture();
         GlStateManager._activeTexture(GL13.GL_TEXTURE0 + TEXTURE_UNIT);
         GL11.glBindTexture(GL12.GL_TEXTURE_3D, texture);
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0 + DEPTH_TEXTURE_UNIT);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
         GlStateManager._activeTexture(previous);
     }
 
@@ -344,6 +389,35 @@ public final class DynamicLightShader {
                 LightVolume.SIZE * MAX_LIGHTS, 0, GL11.GL_RED, GL11.GL_UNSIGNED_BYTE, (ByteBuffer) null);
         GlStateManager._activeTexture(previous);
         uploadBuffer = MemoryUtil.memAlloc(LightVolume.CELLS);
+
+        depthTexture = GL11.glGenTextures();
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0 + DEPTH_TEXTURE_UNIT);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_R16, SpotDepth.RES, SpotDepth.RES * MAX_LIGHTS, 0,
+                GL11.GL_RED, GL11.GL_UNSIGNED_SHORT, (java.nio.ShortBuffer) null);
+        GlStateManager._activeTexture(previous);
+        depthUploadBuffer = MemoryUtil.memAllocShort(SpotDepth.TEXELS);
+    }
+
+    private static void uploadDepth(int slab, short[] depth) {
+        depthUploadBuffer.clear();
+        depthUploadBuffer.put(depth).flip();
+        int previous = GlStateManager._getActiveTexture();
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0 + DEPTH_TEXTURE_UNIT);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+        GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 2);
+        GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, slab * SpotDepth.RES, SpotDepth.RES, SpotDepth.RES,
+                GL11.GL_RED, GL11.GL_UNSIGNED_SHORT, depthUploadBuffer);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 4);
+        GlStateManager._activeTexture(previous);
     }
 
     private static void upload(int slab, byte[] vis) {

@@ -5,6 +5,7 @@ import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ClientSubLevel;
 import dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder;
 import colorfullights.light.DynamicLights;
+import colorfullights.light.LampLights;
 import net.minecraft.client.multiplayer.ClientLevel;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import net.minecraft.client.Minecraft;
@@ -67,6 +68,8 @@ final class SableSubLevels {
                 Vec3 p = e.plotPos();
                 long key = base | ((long) Math.floor(p.x) & 0x7FF) << 21 | ((long) Math.floor(p.y) & 0x3FF) << 11
                         | ((long) Math.floor(p.z) & 0x7FF);
+                // directional lamps (headlights) shine along the ship's turn
+                if (LampLights.addMoving(collector, key, p, e.state(), (v, pt) -> subLevel.renderPose(pt).transformPosition(v))) continue;
                 collector.add(key, () -> pt -> subLevel.renderPose(pt).transformPosition(p),
                         e.state(), e.state().getLightEmission());
             }
