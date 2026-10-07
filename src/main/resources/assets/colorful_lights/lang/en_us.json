@@ -9,5 +9,14 @@
   "colorful_lights.configuration.textureColors": "Colors from textures",
   "colorful_lights.configuration.skyReduction": "Sky light wash-out",
   "colorful_lights.configuration.defaultColor": "Default light color",
-  "colorful_lights.configuration.colors": "Block light colors"
+  "colorful_lights.configuration.colors": "Block light colors",
+  "colorful_lights.configuration.darkness": "Darkness",
+  "colorful_lights.configuration.darkness.enabled": "Darkness enabled",
+  "colorful_lights.configuration.strength": "Darkness strength",
+  "colorful_lights.configuration.moonlight": "Moonlight",
+  "colorful_lights.configuration.overworld": "In the Overworld",
+  "colorful_lights.configuration.nether": "In the Nether",
+  "colorful_lights.configuration.end": "In the End",
+  "colorful_lights.configuration.otherDimensions": "In other dimensions",
+  "colorful_lights.configuration.excludedDimensions": "Dimensions without darkness"
 }

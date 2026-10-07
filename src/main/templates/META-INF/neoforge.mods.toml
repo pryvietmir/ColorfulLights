@@ -30,6 +30,9 @@ displayName = "${mod_name}" #mandatory
 #credits="" #optional
 # A text field displayed in the mod UI
 authors = "${mod_authors}" #optional
+# Lighting is client side; the Nether dimension types and item tags are data.
+# The mod may be installed on either side without the other.
+displayTest = "IGNORE_ALL_VERSION"
 
 # The description text for the mod (multi line!) (#mandatory)
 description = '''${mod_description}'''
@@ -77,6 +80,15 @@ side = "BOTH"
 # stop your mod loading on the server for example.
 #[features."${mod_id}"]
 #openGLVersion="[3.2,)"
+
+# Load after Big Globe so data/bigglobe/dimension_type/nether.json from this jar (no ambient light)
+# is placed above Big Globe's own copy in the mod data pack order.
+[[dependencies."${mod_id}"]]
+modId = "bigglobe"
+type = "optional"
+versionRange = "*"
+ordering = "AFTER"
+side = "BOTH"
 
 # Sodium is optional: without it the vanilla chunk mesher is hooked instead.
 [[dependencies."${mod_id}"]]

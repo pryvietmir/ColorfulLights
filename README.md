@@ -19,6 +19,9 @@ and modded light sources are picked up automatically.
   by the light they move through.
 - **Create Aeronautics (Sable).** Lamps on ships light the world, and ships are lit and tinted by the lights they
   fly past (with extra reach for lights open to the sky).
+- **True darkness.** Places without block or sky light are (almost) black whatever the gamma; the moon lights
+  the surface a little by its phase, night vision and conduit power cancel it. The Nether (also Big Globe's) has
+  no ambient light. Dynamic lights pull things out of the dark.
 - **Iris.** Works with shader packs: colored terrain light is kept, and dynamic lights fall back to being baked
   into chunks (they then move block by block).
 
@@ -33,7 +36,8 @@ and modded light sources are picked up automatically.
 ## Requirements
 
 - Minecraft 1.21.1, NeoForge 21.1+
-- Client only; not needed on servers.
+- Install on the client. On a server it is optional: it only adds data there (the Nether without ambient light,
+  item tags), and clients and servers with or without it can join each other.
 - Optional: Sodium 0.8+, Iris 1.8+, Create 6.0+, Create Aeronautics / Sable 2.0+
 
 ## Configuration
@@ -54,6 +58,11 @@ immediately.
 | `textureColors` | `true` | Derive colors from textures |
 | `defaultColor` | `#FFFFFF` | Color when a block has no usable texture |
 | `colors` | | Overrides, e.g. `"minecraft:torch=#FFB060"` |
+| `darkness.enabled` | `true` | Master switch for darkness |
+| `darkness.strength` | `1.0` | 0 = vanilla lighting, 1 = light level 0 is pitch black |
+| `darkness.moonlight` | `0.25` | How much the full moon lights the surface |
+| `darkness.overworld` / `nether` / `end` / `otherDimensions` | `true` | Darkness per dimension |
+| `darkness.excludedDimensions` | | Dimension ids without darkness |
 
 ## Building
 
