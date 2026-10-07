@@ -1,6 +1,6 @@
 package colorfullights.mixin;
 
-import colorfullights.Config;
+import colorfullights.network.DarknessSettings;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -18,7 +18,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Darkness: darkens the finished lightmap where both sky and block light are low, so that light level 0 at night
  * and in caves becomes (almost) black regardless of gamma. Runs right before the lightmap is uploaded, i.e. after
- * all vanilla and dimension-effect adjustments of the same frame.
+ * all vanilla and dimension-effect adjustments (gamma included) of the same frame. The settings are the ones the
+ * server sent ({@link DarknessSettings}); the player has no switch for them.
  * <p>
  * Dynamic lights need nothing extra: the Sodium shader looks their light up in this same lightmap (at the raised
  * block light level), and baked dynamic light raises the vertices' block light coordinate.
@@ -35,7 +36,8 @@ public abstract class LightTextureMixin {
         LocalPlayer player = this.minecraft.player;
         if (level == null || player == null) return;
         if (level.effects().forceBrightLightmap()) return;
-        if (!Config.darknessIn(level.dimension().location().toString())) return;
+        DarknessSettings settings = DarknessSettings.current();
+        if (settings == null || !settings.isEnabledIn(level.dimension().location().toString())) return;
 
         // Same rules as vanilla: night vision fully, conduit power under water partially.
         float vision = 0.0F;
@@ -44,7 +46,7 @@ public abstract class LightTextureMixin {
         } else if (player.getWaterVision() > 0.0F && player.hasEffect(MobEffects.CONDUIT_POWER)) {
             vision = player.getWaterVision();
         }
-        float strength = Config.darknessStrength * (1.0F - vision);
+        float strength = settings.strength() * (1.0F - vision);
         if (strength <= 0.0F) return;
 
         // How much a sky light level of 15 actually lights things: 1 at day,
@@ -56,7 +58,7 @@ public abstract class LightTextureMixin {
             skyFactor = 1.0F;
         } else {
             float day = Math.max(0.0F, Math.min(1.0F, (level.getSkyDarken(1.0F) - 0.2F) / 0.8F));
-            float night = Config.darknessMoonlight * level.getMoonBrightness();
+            float night = settings.moonlight() * level.getMoonBrightness();
             skyFactor = night + (1.0F - night) * day;
         }
 

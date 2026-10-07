@@ -39,8 +39,8 @@ and modded light sources are picked up automatically.
 ## Requirements
 
 - Minecraft 1.21.1, NeoForge 21.1+
-- Install on the client. On a server it is optional: it only adds data there (the Nether without ambient light,
-  item tags), and clients and servers with or without it can join each other.
+- Install on both the client and the server. The server decides darkness for everyone, and its network channel is
+  required: clients without the mod can't join a server with it, and clients with it can't join servers without it.
 - Optional: Sodium 0.8+, Iris 1.8+, Create 6.0+, Create Aeronautics / Sable 2.0+
 
 ## Configuration
@@ -61,11 +61,18 @@ immediately.
 | `textureColors` | `true` | Derive colors from textures |
 | `defaultColor` | `#FFFFFF` | Color when a block has no usable texture |
 | `colors` | | Overrides, e.g. `"minecraft:torch=#FFB060"` |
-| `darkness.enabled` | `true` | Master switch for darkness |
-| `darkness.strength` | `1.0` | 0 = vanilla lighting, 1 = light level 0 is pitch black |
-| `darkness.moonlight` | `0.25` | How much the full moon lights the surface |
-| `darkness.overworld` / `nether` / `end` / `otherDimensions` | `true` | Darkness per dimension |
-| `darkness.excludedDimensions` | | Dimension ids without darkness |
+
+Darkness is set by the server in its `config/colorful_lights-server.toml` (for singleplayer, the game's own file)
+and sent to players when they join or the file changes. Players can't turn it off; only night vision and conduit
+power cancel it, as in vanilla.
+
+| Option (`[darkness]`) | Default | |
+|---|---|---|
+| `enabled` | `true` | Master switch for darkness |
+| `strength` | `1.0` | 0 = vanilla lighting, 1 = light level 0 is pitch black |
+| `moonlight` | `0.25` | How much the full moon lights the surface |
+| `overworld` / `nether` / `end` / `otherDimensions` | `true` | Darkness per dimension |
+| `excludedDimensions` | | Dimension ids without darkness |
 
 ## Building
 

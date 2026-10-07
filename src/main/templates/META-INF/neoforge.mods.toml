@@ -30,9 +30,9 @@ displayName = "${mod_name}" #mandatory
 #credits="" #optional
 # A text field displayed in the mod UI
 authors = "${mod_authors}" #optional
-# Lighting is client side; the Nether dimension types and item tags are data.
-# The mod may be installed on either side without the other.
-displayTest = "IGNORE_ALL_VERSION"
+# Needed on both sides: the server decides darkness and only lets in clients with the same mod
+# (its network channel is required). The server list shows servers with another version as incompatible.
+displayTest = "MATCH_VERSION"
 
 # The description text for the mod (multi line!) (#mandatory)
 description = '''${mod_description}'''
