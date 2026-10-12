@@ -18,7 +18,8 @@ public final class Timings {
         LIGHT_VOLUME("  of which wall visibility volumes"),
         OBJECT_TINT("ship/contraption color grid"),
         WORLD_TINT("entity/particle colors (cache misses)"),
-        SHADER_FRAME("dynamic light shader setup");
+        SHADER_FRAME("dynamic light shader setup"),
+        BEAMS("visible lamp beams (CPU side)");
 
         final String label;
         final LongAdder nanos = new LongAdder();

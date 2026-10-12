@@ -36,6 +36,9 @@ public class ColorfulLightsClient {
             LampSettings.reset();
         });
 
+        NeoForge.EVENT_BUS.addListener(colorfullights.render.VolumetricBeams::onRenderStage);
+        if (colorfullights.debug.AutoScreenshot.enabled()) NeoForge.EVENT_BUS.addListener(colorfullights.debug.AutoScreenshot::onClientTick);
+
         DynamicLights.addLevelProvider(LampLights::collect);
 
         if (SableCompat.LOADED) SableCompat.registerShaderHooks();

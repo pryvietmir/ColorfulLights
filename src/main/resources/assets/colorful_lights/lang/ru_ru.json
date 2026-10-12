@@ -11,5 +11,9 @@
   "colorful_lights.configuration.shipLights": "Свет на кораблях и контрапциях",
   "colorful_lights.configuration.spotColor": "Цвет прожекторов (#RRGGBB, пусто = свой)",
   "colorful_lights.configuration.spotRange": "Дальность луча прожекторов",
-  "colorful_lights.configuration.spotFocus": "Фокусировка луча прожекторов"
+  "colorful_lights.configuration.spotFocus": "Фокусировка луча прожекторов",
+  "colorful_lights.configuration.volumetricBeams": "Видимые лучи в тумане и дожде",
+  "colorful_lights.configuration.beamIntensity": "Яркость видимого луча",
+  "colorful_lights.configuration.beamSteps": "Качество видимого луча (шаги)",
+  "colorful_lights.configuration.beamBaseFog": "Дымка в ясную погоду"
 }

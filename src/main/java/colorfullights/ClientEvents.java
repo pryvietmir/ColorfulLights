@@ -2,6 +2,7 @@ package colorfullights;
 
 import colorfullights.compat.IrisCompat;
 import colorfullights.compat.SableCompat;
+import colorfullights.fog.FogDensity;
 import colorfullights.debug.Timings;
 import colorfullights.light.DynamicLights;
 import colorfullights.light.LightColors;
@@ -48,6 +49,7 @@ final class ClientEvents {
             // after a resource reload the world is re-meshed anyway; only re-mesh if colors actually changed
             if (LightColors.rebuild() && mc.level != null) mc.levelRenderer.allChanged();
         }
+        FogDensity.tick(mc);
         DynamicLights.tick(mc);
         ObjectTintVolume.tick(mc);
         if (SableCompat.LOADED) SableCompat.tickBakedShips(IrisCompat.shaderPackActive());

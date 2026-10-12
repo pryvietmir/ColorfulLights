@@ -87,6 +87,23 @@ public class Config {
             .comment("Focus of directional lamps: higher = narrower, tighter beam, lower = wider (1 = default).")
             .defineInRange("spotFocus", 1.0, 0.4, 4.0);
 
+    private static final ModConfigSpec.BooleanValue VOLUMETRIC_BEAMS = BUILDER
+            .comment("Beams of directional lamps are visible in the air as light scattered by fog, rain and snow.")
+            .define("volumetricBeams", true);
+
+    private static final ModConfigSpec.DoubleValue BEAM_INTENSITY = BUILDER
+            .comment("Brightness of the visible beams in the air (1 = default).")
+            .defineInRange("beamIntensity", 1.0, 0.0, 4.0);
+
+    private static final ModConfigSpec.IntValue BEAM_STEPS = BUILDER
+            .comment("Samples along each view ray through a visible beam. More = smoother shadows in the beam, slower.")
+            .defineInRange("beamSteps", 12, 4, 32);
+
+    private static final ModConfigSpec.DoubleValue BEAM_BASE_FOG = BUILDER
+            .comment("Haze that is always in the air, so beams are faintly visible even in clear weather (0 = none).",
+                    "Rain, snow, night and being underground add to it.")
+            .defineInRange("beamBaseFog", 0.15, 0.0, 1.0);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     public static volatile boolean enabled = true;
@@ -106,6 +123,10 @@ public class Config {
     public static volatile boolean shipLights = true;
     public static volatile float spotRange = 1.0f;
     public static volatile float spotFocus = 1.0f;
+    public static volatile boolean volumetricBeams = true;
+    public static volatile float beamIntensity = 1.0f;
+    public static volatile int beamSteps = 12;
+    public static volatile float beamBaseFog = 0.15f;
 
     private static boolean isColor(Object o) {
         return o instanceof String s && LightColors.parseColor(s) >= 0;
@@ -133,7 +154,8 @@ public class Config {
         List<Object> values = List.of(ENABLED.get(), INTENSITY.get(), SATURATION.get(), BRIGHTNESS.get(), SKY_REDUCTION.get(),
                 DYNAMIC_LIGHTS.get(), OBJECT_LIGHT_RANGE.get(), TINT_ENTITIES.get(), TEXTURE_COLORS.get(), DEFAULT_COLOR.get(), List.copyOf(COLORS.get()),
                 SPOT_COLOR.get(), SPOT_RANGE.get(), SPOT_FOCUS.get(), SPOT_LIGHTS.get(), SPOT_SHADOWS.get(),
-                MAX_DYNAMIC_LIGHTS.get(), MAX_BEAMS.get(), SHIP_LIGHTS.get());
+                MAX_DYNAMIC_LIGHTS.get(), MAX_BEAMS.get(), SHIP_LIGHTS.get(),
+                VOLUMETRIC_BEAMS.get(), BEAM_INTENSITY.get(), BEAM_STEPS.get(), BEAM_BASE_FOG.get());
         if (values.equals(applied)) return;
         applied = values;
 
@@ -155,6 +177,10 @@ public class Config {
         maxDynamicLights = MAX_DYNAMIC_LIGHTS.get();
         maxBeams = MAX_BEAMS.get();
         shipLights = SHIP_LIGHTS.get();
+        volumetricBeams = VOLUMETRIC_BEAMS.get();
+        beamIntensity = BEAM_INTENSITY.get().floatValue();
+        beamSteps = BEAM_STEPS.get();
+        beamBaseFog = BEAM_BASE_FOG.get().floatValue();
         if (shadowsChanged) colorfullights.light.DynamicLights.invalidateVisibility();
         LightColors.configure(COLORS.get(), LightColors.parseColor(DEFAULT_COLOR.get()), TEXTURE_COLORS.get());
     }

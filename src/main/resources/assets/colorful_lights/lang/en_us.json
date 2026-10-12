@@ -31,5 +31,9 @@
   "colorful_lights.configuration.spotShadows": "Beam shadows (walls stop beams)",
   "colorful_lights.configuration.maxDynamicLights": "Most dynamic lights at once",
   "colorful_lights.configuration.maxBeams": "Most placed lamp beams at once",
-  "colorful_lights.configuration.shipLights": "Lights on ships & contraptions"
+  "colorful_lights.configuration.shipLights": "Lights on ships & contraptions",
+  "colorful_lights.configuration.volumetricBeams": "Visible beams in fog and rain",
+  "colorful_lights.configuration.beamIntensity": "Visible beam brightness",
+  "colorful_lights.configuration.beamSteps": "Visible beam quality (samples)",
+  "colorful_lights.configuration.beamBaseFog": "Haze in clear weather"
 }
