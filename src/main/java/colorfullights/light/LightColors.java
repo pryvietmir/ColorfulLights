@@ -117,8 +117,12 @@ public final class LightColors {
                 if (state.getLightEmission() <= 0) continue;
                 emitters++;
                 int color;
+                colorfullights.DirectionalLamps.Lamp lamp = colorfullights.DirectionalLamps.of(state);
+                int lampColor = lamp != null ? colorfullights.DirectionalLamps.colorOf(lamp) : -1;
                 if (override != null) {
                     color = override;
+                } else if (lampColor >= 0) {
+                    color = lampColor;
                 } else if (useTextures) {
                     color = textureColor(state, dispatcher, spriteCache, defaultColor);
                 } else {

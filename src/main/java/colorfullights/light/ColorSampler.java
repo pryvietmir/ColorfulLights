@@ -337,7 +337,9 @@ public final class ColorSampler {
         // sky light only washes the color out while the sky is actually bright.
         float daylight = 1f - level.getSkyDarken() / 11f;
         float sky = level.getBrightness(LightLayer.SKY, pos) / 15f * daylight;
-        float strength = Config.intensity * Math.min(1f, blockLevel / 15f * 2.5f) * (1f - Config.skyReduction * sky);
+        // In daylight under the open sky the tint (which only darkens a mob) all but disappears, whatever the
+        // terrain setting is: sunlit mobs next to a lamp must not look dimmed or colored.
+        float strength = Config.intensity * Math.min(1f, blockLevel / 15f * 2.5f) * (1f - Math.max(Config.skyReduction, 0.95f) * sky);
         if (strength <= 0f) return WHITE;
         int r = Math.round(255f * multiplier(tint >> 16, strength));
         int g = Math.round(255f * multiplier(tint >> 8, strength));

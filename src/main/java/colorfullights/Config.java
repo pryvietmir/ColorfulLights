@@ -54,6 +54,39 @@ public class Config {
             .comment("Per-block color overrides, as \"namespace:block=#RRGGBB\". These win over texture colors.")
             .defineListAllowEmpty("colors", LightColors.DEFAULTS, () -> "minecraft:torch=#FFFFFF", Config::isEntry);
 
+    private static final ModConfigSpec.BooleanValue SPOT_LIGHTS = BUILDER
+            .comment("Directional lamps (headlights, frontlights) shine as long beams. Off: they only glow around themselves.")
+            .define("spotLights", true);
+
+    private static final ModConfigSpec.BooleanValue SPOT_SHADOWS = BUILDER
+            .comment("Beams of directional lamps are stopped by walls (a shadow map). Turn off to save performance:",
+                    "beams then shine through everything.")
+            .define("spotShadows", true);
+
+    private static final ModConfigSpec.IntValue MAX_DYNAMIC_LIGHTS = BUILDER
+            .comment("Most dynamic lights drawn at once, the nearest first. Fewer is faster.")
+            .defineInRange("maxDynamicLights", 16, 1, 16);
+
+    private static final ModConfigSpec.IntValue MAX_BEAMS = BUILDER
+            .comment("Most beams of lamps placed in the world drawn at once, the nearest first (0: none).")
+            .defineInRange("maxBeams", 12, 0, 12);
+
+    private static final ModConfigSpec.BooleanValue SHIP_LIGHTS = BUILDER
+            .comment("Lamps on Create contraptions and Aeronautics ships emit light.")
+            .define("shipLights", true);
+
+    private static final ModConfigSpec.ConfigValue<String> SPOT_COLOR = BUILDER
+            .comment("Paints all directional lamps (headlights, frontlights) this color (#RRGGBB). Empty: each lamp's own color.")
+            .define("spotColor", "", s -> s instanceof String str && (str.isBlank() || LightColors.parseColor(str) >= 0));
+
+    private static final ModConfigSpec.DoubleValue SPOT_RANGE = BUILDER
+            .comment("Multiplies how far directional lamps shine (1 = default, 40 blocks for most).")
+            .defineInRange("spotRange", 1.0, 0.1, 3.0);
+
+    private static final ModConfigSpec.DoubleValue SPOT_FOCUS = BUILDER
+            .comment("Focus of directional lamps: higher = narrower, tighter beam, lower = wider (1 = default).")
+            .defineInRange("spotFocus", 1.0, 0.4, 4.0);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     public static volatile boolean enabled = true;
@@ -64,6 +97,15 @@ public class Config {
     public static volatile boolean dynamicLights = true;
     public static volatile float objectLightRange = 2.0f;
     public static volatile boolean tintEntities = true;
+    /** Color of all directional lamps, or -1 for their own. */
+    public static volatile int spotColor = -1;
+    public static volatile boolean spotLights = true;
+    public static volatile boolean spotShadows = true;
+    public static volatile int maxDynamicLights = 16;
+    public static volatile int maxBeams = 12;
+    public static volatile boolean shipLights = true;
+    public static volatile float spotRange = 1.0f;
+    public static volatile float spotFocus = 1.0f;
 
     private static boolean isColor(Object o) {
         return o instanceof String s && LightColors.parseColor(s) >= 0;
@@ -89,7 +131,9 @@ public class Config {
     /** Invalidates the color table; ClientEvents rebuilds it and re-meshes chunks on the next tick. */
     private static synchronized void apply() {
         List<Object> values = List.of(ENABLED.get(), INTENSITY.get(), SATURATION.get(), BRIGHTNESS.get(), SKY_REDUCTION.get(),
-                DYNAMIC_LIGHTS.get(), OBJECT_LIGHT_RANGE.get(), TINT_ENTITIES.get(), TEXTURE_COLORS.get(), DEFAULT_COLOR.get(), List.copyOf(COLORS.get()));
+                DYNAMIC_LIGHTS.get(), OBJECT_LIGHT_RANGE.get(), TINT_ENTITIES.get(), TEXTURE_COLORS.get(), DEFAULT_COLOR.get(), List.copyOf(COLORS.get()),
+                SPOT_COLOR.get(), SPOT_RANGE.get(), SPOT_FOCUS.get(), SPOT_LIGHTS.get(), SPOT_SHADOWS.get(),
+                MAX_DYNAMIC_LIGHTS.get(), MAX_BEAMS.get(), SHIP_LIGHTS.get());
         if (values.equals(applied)) return;
         applied = values;
 
@@ -101,6 +145,17 @@ public class Config {
         dynamicLights = DYNAMIC_LIGHTS.get();
         objectLightRange = OBJECT_LIGHT_RANGE.get().floatValue();
         tintEntities = TINT_ENTITIES.get();
+        spotColor = SPOT_COLOR.get().isBlank() ? -1 : LightColors.parseColor(SPOT_COLOR.get());
+        spotRange = SPOT_RANGE.get().floatValue();
+        spotFocus = SPOT_FOCUS.get().floatValue();
+        spotLights = SPOT_LIGHTS.get();
+        boolean shadows = SPOT_SHADOWS.get();
+        boolean shadowsChanged = shadows != spotShadows;
+        spotShadows = shadows;
+        maxDynamicLights = MAX_DYNAMIC_LIGHTS.get();
+        maxBeams = MAX_BEAMS.get();
+        shipLights = SHIP_LIGHTS.get();
+        if (shadowsChanged) colorfullights.light.DynamicLights.invalidateVisibility();
         LightColors.configure(COLORS.get(), LightColors.parseColor(DEFAULT_COLOR.get()), TEXTURE_COLORS.get());
     }
 }

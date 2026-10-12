@@ -1,3 +1,15 @@
 {
-  "block.colorful_lights.beam_light": "Свет луча"
+  "block.colorful_lights.beam_light": "Свет луча",
+  "colorful_lights.lamp.painted": "Прожектор окрашен: %s",
+  "colorful_lights.lamp.unpainted": "Цвет прожектора сброшен",
+  "colorful_lights.lamp.range": "Дальность луча: %s",
+  "colorful_lights.lamp.focus": "Фокусировка луча: %s",
+  "colorful_lights.configuration.spotLights": "Лучи прожекторов",
+  "colorful_lights.configuration.spotShadows": "Тени лучей (стены останавливают свет)",
+  "colorful_lights.configuration.maxDynamicLights": "Макс. динамических источников",
+  "colorful_lights.configuration.maxBeams": "Макс. лучей установленных ламп",
+  "colorful_lights.configuration.shipLights": "Свет на кораблях и контрапциях",
+  "colorful_lights.configuration.spotColor": "Цвет прожекторов (#RRGGBB, пусто = свой)",
+  "colorful_lights.configuration.spotRange": "Дальность луча прожекторов",
+  "colorful_lights.configuration.spotFocus": "Фокусировка луча прожекторов"
 }

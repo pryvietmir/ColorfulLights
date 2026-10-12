@@ -38,14 +38,33 @@ public final class DirectionalLamps {
      * @param outer   half angle (degrees) where the beam fades out
      * @param range   reach of the beam in blocks
      * @param ambient the block's own all-around light level instead of the declared one (-1: keep it)
+     * @param color   color of the light (0xRRGGBB), or -1 for the one derived from the block's textures
      */
-    public record Lamp(ResourceLocation block, Mount mount, int level, float inner, float outer, float range, int ambient) {
+    public record Lamp(ResourceLocation block, Mount mount, int level, float inner, float outer, float range, int ambient,
+                       int color) {
     }
 
     private static final List<Lamp> TABLE = List.of(
             // Create: Bells & Whistles headlight: lantern light, on any face (lens away from the support block)
             new Lamp(ResourceLocation.fromNamespaceAndPath("bellsandwhistles", "headlight"), Mount.FACE_ATTACHED,
-                    15, 14f, 32f, 40f, 6));
+                    15, 14f, 32f, 40f, 6, -1),
+            // Design n' Decor frontlights: lens along the facing (the base sits on the opposite side); only the
+            // lit ones emit light, so unlit ones get no beam
+            frontlight("andesite_frontlight"), frontlight("brass_frontlight"), frontlight("copper_frontlight"),
+            frontlight("gold_frontlight"), frontlight("industrial_frontlight"), frontlight("iron_frontlight"));
+
+    /** A slightly warm white. */
+    private static final int WARM_WHITE = 0xFFF0DC;
+
+    private static Lamp frontlight(String name) {
+        return new Lamp(ResourceLocation.fromNamespaceAndPath("dndecor", name), Mount.FACING, 15, 14f, 32f, 40f, 6, WARM_WHITE);
+    }
+
+    /** The color a lamp's light has: the one painted over all lamps in the config, or its own (-1: from textures). */
+    public static int colorOf(Lamp lamp) {
+        int painted = Config.spotColor;
+        return painted >= 0 ? painted : lamp.color();
+    }
 
     private static volatile Map<Block, Lamp> byBlock;
 

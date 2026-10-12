@@ -16,6 +16,8 @@ public final class SodiumDynamicLightUniforms {
     private final Vec4Array volumes;
     private final Vec4Array directions;
     private final Vec4Array spots;
+    private final Vec4Array shadowPositions;
+    private final Vec4Array shadowDirections;
     private final GlUniformInt depth;
     private final Vec4Array params;
     private final GlUniformInt visibility;
@@ -27,6 +29,8 @@ public final class SodiumDynamicLightUniforms {
         volumes = context.bindUniformOptional("u_DynVolume", Vec4Array::new);
         directions = context.bindUniformOptional("u_DynDir", Vec4Array::new);
         spots = context.bindUniformOptional("u_DynSpot", Vec4Array::new);
+        shadowPositions = context.bindUniformOptional("u_DynShadowPos", Vec4Array::new);
+        shadowDirections = context.bindUniformOptional("u_DynShadowDir", Vec4Array::new);
         depth = context.bindUniformOptional("u_DynDepth", GlUniformInt::new);
         params = context.bindUniformOptional("u_DynParams", Vec4Array::new);
         visibility = context.bindUniformOptional("u_DynVis", GlUniformInt::new);
@@ -36,7 +40,7 @@ public final class SodiumDynamicLightUniforms {
     public static SodiumDynamicLightUniforms bind(ShaderBindingContext context) {
         SodiumDynamicLightUniforms u = new SodiumDynamicLightUniforms(context);
         return u.count != null && u.positions != null && u.colors != null && u.volumes != null
-                && u.directions != null && u.spots != null && u.depth != null && u.params != null && u.visibility != null ? u : null;
+                && u.directions != null && u.spots != null && u.shadowPositions != null && u.shadowDirections != null && u.depth != null && u.params != null && u.visibility != null ? u : null;
     }
 
     /** Uploads this frame's lights; the program is bound. */
@@ -50,6 +54,8 @@ public final class SodiumDynamicLightUniforms {
         volumes.set(DynamicLightShader.VOLUMES, n);
         directions.set(DynamicLightShader.DIRECTIONS, n);
         spots.set(DynamicLightShader.SPOTS, n);
+        shadowPositions.set(DynamicLightShader.SHADOW_POS, n);
+        shadowDirections.set(DynamicLightShader.SHADOW_DIR, n);
         depth.set(DynamicLightShader.DEPTH_TEXTURE_UNIT);
         params.set(DynamicLightShader.PARAMS, 1);
         visibility.set(DynamicLightShader.TEXTURE_UNIT);

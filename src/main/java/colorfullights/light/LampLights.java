@@ -1,6 +1,8 @@
 package colorfullights.light;
 
+import colorfullights.Config;
 import colorfullights.DirectionalLamps;
+import colorfullights.lamp.LampSettings;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -28,7 +30,7 @@ public final class LampLights {
 
     /** Level provider: beams of placed lamps near the camera. */
     public static void collect(ClientLevel level, Vec3 camera, double range, DynamicLights.Collector collector) {
-        if (DirectionalLamps.isEmpty()) return;
+        if (!Config.spotLights || Config.maxBeams <= 0 || DirectionalLamps.isEmpty()) return;
         List<Found> found = new ArrayList<>();
         int r = (int) Math.ceil(RANGE / 16);
         int cx = SectionPos.blockToSectionCoord(camera.x), cy = SectionPos.blockToSectionCoord(camera.y), cz = SectionPos.blockToSectionCoord(camera.z);
@@ -50,7 +52,7 @@ public final class LampLights {
             }
         }
         found.sort(Comparator.comparingDouble(Found::dist2));
-        for (int i = 0; i < found.size() && i < MAX_PLACED; i++) {
+        for (int i = 0; i < found.size() && i < Math.min(MAX_PLACED, Config.maxBeams); i++) {
             Found f = found.get(i);
             Direction d = DirectionalLamps.direction(f.lamp(), f.state());
             Vec3 dir = Vec3.atLowerCornerOf(d.getNormal());
@@ -58,18 +60,18 @@ public final class LampLights {
             // the key includes the state, so turning the lamp makes a new source
             long key = Long.MIN_VALUE | 1L << 62
                     | ((f.pos().asLong() ^ Block.getId(f.state()) * 0x9E3779B97F4A7C15L) & 0x3FFFFFFFFFFFFFFFL);
-            add(collector, key, pt -> origin, pt -> dir, f.state(), f.lamp());
+            add(collector, key, pt -> origin, pt -> dir, f.state(), f.lamp(), LampSettings.client(f.pos().asLong()));
         }
     }
 
     /**
      * The beam of a lamp on something moving (a contraption, a ship): {@code toWorld} turns a position in the
-     * lamp's local frame into a world position at a partial tick. Returns false if the state isn't a lamp.
+     * lamp's local frame into a world position at a partial tick, {@code settings} are the lamp's {@link LampSettings}. Returns false if the state isn't a lamp.
      */
     public static boolean addMoving(DynamicLights.Collector collector, long key, Vec3 localCenter, BlockState state,
-                                    java.util.function.BiFunction<Vec3, Float, Vec3> toWorld) {
+                                    java.util.function.BiFunction<Vec3, Float, Vec3> toWorld, long settings) {
         DirectionalLamps.Lamp lamp = DirectionalLamps.of(state);
-        if (lamp == null) return false;
+        if (lamp == null || !Config.spotLights) return false;
         Vec3 localDir = Vec3.atLowerCornerOf(DirectionalLamps.direction(lamp, state).getNormal());
         Vec3 localOrigin = localCenter.add(localDir.scale(0.3));
         Vec3 localAhead = localOrigin.add(localDir);
@@ -78,13 +80,17 @@ public final class LampLights {
             Vec3 d = toWorld.apply(localAhead, pt).subtract(a);
             double len = d.length();
             return len > 1e-6 ? d.scale(1 / len) : new Vec3(0, 0, 1);
-        }, state, lamp);
+        }, state, lamp, settings);
         return true;
     }
 
     private static void add(DynamicLights.Collector collector, long key, DynamicLights.Positioner origin,
-                            DynamicLights.Positioner direction, BlockState state, DirectionalLamps.Lamp lamp) {
-        collector.addSpot(key, () -> origin, () -> direction, LightColors.colorOf(Block.getId(state)), lamp.level(),
-                lamp.inner(), lamp.outer(), lamp.range());
+                            DynamicLights.Positioner direction, BlockState state, DirectionalLamps.Lamp lamp, long settings) {
+        int color = LampSettings.color(settings);
+        if (color < 0) color = DirectionalLamps.colorOf(lamp);
+        if (color < 0) color = LightColors.colorOf(Block.getId(state));
+        float focus = Config.spotFocus * LampSettings.focus(settings);
+        collector.addSpot(key, () -> origin, () -> direction, color, lamp.level(),
+                lamp.inner() / focus, lamp.outer() / focus, lamp.range() * Config.spotRange * LampSettings.range(settings));
     }
 }

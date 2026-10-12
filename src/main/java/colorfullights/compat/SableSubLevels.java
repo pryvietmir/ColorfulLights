@@ -69,7 +69,8 @@ final class SableSubLevels {
                 long key = base | ((long) Math.floor(p.x) & 0x7FF) << 21 | ((long) Math.floor(p.y) & 0x3FF) << 11
                         | ((long) Math.floor(p.z) & 0x7FF);
                 // directional lamps (headlights) shine along the ship's turn
-                if (LampLights.addMoving(collector, key, p, e.state(), (v, pt) -> subLevel.renderPose(pt).transformPosition(v))) continue;
+                if (LampLights.addMoving(collector, key, p, e.state(), (v, pt) -> subLevel.renderPose(pt).transformPosition(v),
+                        colorfullights.lamp.LampSettings.client(BlockPos.containing(p).asLong()))) continue;
                 collector.add(key, () -> pt -> subLevel.renderPose(pt).transformPosition(p),
                         e.state(), e.state().getLightEmission());
             }

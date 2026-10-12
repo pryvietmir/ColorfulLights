@@ -63,6 +63,8 @@ public final class DynamicLightShader {
     static final float[] VOLUMES = new float[MAX_LIGHTS * 4];
     static final float[] DIRECTIONS = new float[MAX_LIGHTS * 4];
     static final float[] SPOTS = new float[MAX_LIGHTS * 4];
+    static final float[] SHADOW_POS = new float[MAX_LIGHTS * 4];
+    static final float[] SHADOW_DIR = new float[MAX_LIGHTS * 4];
     static final float[] PARAMS = new float[4];
 
     // per-frame scratch
@@ -159,6 +161,8 @@ public final class DynamicLightShader {
             uniform vec4 u_DynVolume[MAX_LIGHTS]; // xyz: camera-relative origin of the visibility volume, w: cos of the outer cone
             uniform vec4 u_DynDir[MAX_LIGHTS];    // xyz: spot light direction, w: cos of the inner cone (plain light: 0, -1; outer -2)
             uniform vec4 u_DynSpot[MAX_LIGHTS];   // x: range of a long-range spot light (0: reach = level), y: shadow map slab (-1: none), z: tan of the outer half angle
+            uniform vec4 u_DynShadowPos[MAX_LIGHTS]; // xyz: camera-relative origin the shadow map was computed at
+            uniform vec4 u_DynShadowDir[MAX_LIGHTS]; // xyz: direction the shadow map was computed for
             uniform vec4 u_DynParams;             // x: intensity, y: sky reduction, z: brightness
             uniform sampler3D u_DynVis;
             uniform sampler2D u_DynDepth;
@@ -166,17 +170,21 @@ public final class DynamicLightShader {
 
             // Shadow map of a long-range spot light (see SpotDepth): 1 in front of the first wall towards p.
             float _dyn_shadow(int i, vec3 p) {
-                vec3 dir = u_DynDir[i].xyz;
-                vec3 v = p - u_DynPos[i].xyz;
+                // the map is looked up in the frame it was computed in, not the interpolated one of this frame
+                vec3 dir = u_DynShadowDir[i].xyz;
+                vec3 v = p - u_DynShadowPos[i].xyz;
                 float fwd = dot(v, dir);
                 if (fwd <= 1e-4) return 0.0;
                 vec3 right = normalize(cross(dir, abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
                 vec3 up = cross(right, dir);
                 vec2 uv = vec2(dot(v, right), dot(v, up)) / (fwd * u_DynSpot[i].z);
-                if (abs(uv.x) > 1.0 || abs(uv.y) > 1.0) return 0.0;
+                // outside a stale map (the lamp turned since it was computed): no shadow known, so lit
+                if (abs(uv.x) > 1.0 || abs(uv.y) > 1.0) return 1.0;
                 vec2 t = clamp(uv * 0.5 + 0.5, vec2(0.5 / SPOT_RES.0), vec2(1.0 - 0.5 / SPOT_RES.0));
                 float d = texture(u_DynDepth, vec2(t.x, (u_DynSpot[i].y + t.y) / MAX_LIGHTS.0)).r * u_DynSpot[i].x;
-                return clamp(d + 0.75 - length(v), 0.0, 1.0);
+                // soft edge, widened by the world size of a texel (see SpotDepth.edge)
+                float b = min(3.0, 0.75 * 2.0 * fwd * u_DynSpot[i].z / SPOT_RES.0);
+                return clamp((d + 0.75 + b - length(v)) / (1.0 + 2.0 * b), 0.0, 1.0);
             }
 
             vec4 _dyn_light(vec4 lit) {
@@ -215,9 +223,13 @@ public final class DynamicLightShader {
                 }
                 if (level <= 0.0) return lit;
 
+                // daylight outshines lamps: under open sky they fade out as the day brightens
+                float sky = clamp(v_DynLight.y * 16.0 / 15.0, 0.0, 1.0);
+                level *= 1.0 - u_DynParams.w * sky;
+                if (level <= 0.0) return lit;
+
                 float dyn = min(level * u_DynParams.z, 15.0);
                 float base = v_DynLight.x * 16.0;
-                float sky = clamp(v_DynLight.y * 16.0 / 15.0, 0.0, 1.0);
 
                 vec3 tint = colorSum / weightSum;
                 tint /= max(max(tint.r, tint.g), max(tint.b, 1e-4));
@@ -271,7 +283,7 @@ public final class DynamicLightShader {
             FRAME_POS[i] = candidates.get(i).framePosition(pt);
             DIST[i] = FRAME_POS[i].distanceToSqr(cam);
         }
-        int n = Math.min(MAX_LIGHTS, m);
+        int n = Math.min(Math.min(MAX_LIGHTS, Config.maxDynamicLights), m);
         for (int k = 0; k < n; k++) {
             int best = k;
             for (int i = k + 1; i < m; i++) if (DIST[i] < DIST[best]) best = i;
@@ -356,11 +368,29 @@ public final class DynamicLightShader {
             SPOTS[i + 1] = shadowMap ? slab : -1f;
             SPOTS[i + 2] = shadowMap ? s.tanOuter : 0f;
             SPOTS[i + 3] = 0f;
+            if (shadowMap) {
+                SHADOW_POS[i] = (float) (s.sx - cam.x);
+                SHADOW_POS[i + 1] = (float) (s.sy - cam.y);
+                SHADOW_POS[i + 2] = (float) (s.sz - cam.z);
+                SHADOW_DIR[i] = s.ddx;
+                SHADOW_DIR[i + 1] = s.ddy;
+                SHADOW_DIR[i + 2] = s.ddz;
+            }
         }
         PARAMS[0] = Config.intensity;
         PARAMS[1] = Config.skyReduction;
         PARAMS[2] = Config.brightness;
-        PARAMS[3] = 0f;
+        PARAMS[3] = daylight(mc, pt);
+    }
+
+    /** How bright the day is, 0 (night) to 1 (clear noon), like vanilla's sky darkening; 0 without a sky. */
+    private static float daylight(Minecraft mc, float pt) {
+        if (!mc.level.dimensionType().hasSkyLight()) return 0f;
+        float g = 1f - (net.minecraft.util.Mth.cos(mc.level.getTimeOfDay(pt) * ((float) Math.PI * 2f)) * 2f + 0.2f);
+        g = 1f - net.minecraft.util.Mth.clamp(g, 0f, 1f);
+        g *= 1f - mc.level.getRainLevel(pt) * 5f / 16f;
+        g *= 1f - mc.level.getThunderLevel(pt) * 5f / 16f;
+        return g;
     }
 
     /** Binds the visibility texture to {@link #TEXTURE_UNIT} and the shadow maps to {@link #DEPTH_TEXTURE_UNIT}. */

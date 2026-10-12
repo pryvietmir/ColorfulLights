@@ -9,6 +9,9 @@
   "colorful_lights.configuration.textureColors": "Colors from textures",
   "colorful_lights.configuration.skyReduction": "Sky light wash-out",
   "colorful_lights.configuration.defaultColor": "Default light color",
+  "colorful_lights.configuration.spotColor": "Lamp color (#RRGGBB, empty = own)",
+  "colorful_lights.configuration.spotRange": "Lamp beam distance",
+  "colorful_lights.configuration.spotFocus": "Lamp beam focus",
   "colorful_lights.configuration.colors": "Block light colors",
   "colorful_lights.configuration.darkness": "Darkness",
   "colorful_lights.configuration.darkness.enabled": "Darkness enabled",
@@ -19,5 +22,14 @@
   "colorful_lights.configuration.end": "In the End",
   "colorful_lights.configuration.otherDimensions": "In other dimensions",
   "colorful_lights.configuration.excludedDimensions": "Dimensions without darkness",
-  "block.colorful_lights.beam_light": "Beam Light"
+  "block.colorful_lights.beam_light": "Beam Light",
+  "colorful_lights.lamp.painted": "Lamp painted %s",
+  "colorful_lights.lamp.unpainted": "Lamp color reset",
+  "colorful_lights.lamp.range": "Beam distance: %s",
+  "colorful_lights.lamp.focus": "Beam focus: %s",
+  "colorful_lights.configuration.spotLights": "Lamp beams",
+  "colorful_lights.configuration.spotShadows": "Beam shadows (walls stop beams)",
+  "colorful_lights.configuration.maxDynamicLights": "Most dynamic lights at once",
+  "colorful_lights.configuration.maxBeams": "Most placed lamp beams at once",
+  "colorful_lights.configuration.shipLights": "Lights on ships & contraptions"
 }

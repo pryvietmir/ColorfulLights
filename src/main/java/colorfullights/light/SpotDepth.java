@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 
 /**
  * Shadow map of a long-range spot light: for {@link #RES}² rays spread over the light's cone, the distance to the
@@ -15,8 +16,15 @@ import net.minecraft.world.level.chunk.LevelChunk;
  * Distances are stored as fractions of the light's range (65535 = nothing hit).
  */
 public final class SpotDepth {
-    public static final int RES = 32;
+    public static final int RES = 64;
     public static final int TEXELS = RES * RES;
+
+    /** A map without walls (shadows switched off). */
+    public static final short[] OPEN = new short[TEXELS];
+
+    static {
+        java.util.Arrays.fill(OPEN, (short) 0xFFFF);
+    }
 
     private SpotDepth() {
     }
@@ -47,6 +55,12 @@ public final class SpotDepth {
         float[] b = basis(dx, dy, dz);
         short[] depth = new short[TEXELS];
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        cacheCx = cacheCz = Integer.MIN_VALUE;
+        cacheChunk = null;
+        cacheSection = null;
+        cacheSy = Integer.MIN_VALUE;
+        minY = level.getMinBuildHeight();
+        maxY = level.getMaxBuildHeight();
         for (int j = 0; j < RES; j++) {
             float v = (j + 0.5f) / RES * 2f - 1f;
             for (int i = 0; i < RES; i++) {
@@ -90,18 +104,38 @@ public final class SpotDepth {
                 tMaxZ += tDeltaZ;
             }
             if (t >= range) break;
-            if (blocksLight(level, pos.set(x, y, z))) return t;
+            if (blocksLight(level, pos, x, y, z)) return t;
         }
         return range;
     }
 
-    /** Same rule as {@link LightVolume}: blocks with full light opacity, and unloaded chunks. */
-    private static boolean blocksLight(Level level, BlockPos pos) {
-        if (level.isOutsideBuildHeight(pos)) return false;
-        LevelChunk chunk = level.getChunkSource().getChunk(pos.getX() >> 4, pos.getZ() >> 4, false);
-        if (chunk == null) return true;
-        BlockState state = chunk.getBlockState(pos);
-        return !state.isAir() && state.getLightBlock(level, pos) >= 15;
+    // The chunk and section the march is in, so most cells need no chunk lookup (client thread only).
+    private static int cacheCx, cacheCz, cacheSy, minY, maxY;
+    private static LevelChunk cacheChunk;
+    private static LevelChunkSection cacheSection;
+
+    /**
+     * Same rule as {@link LightVolume}: blocks with full light opacity, and unloaded chunks. Everything that doesn't
+     * stop light (grass, flowers, leaves, glass, ...) is transparent to the beam.
+     */
+    private static boolean blocksLight(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z) {
+        if (y < minY || y >= maxY) return false;
+        int cx = x >> 4, cz = z >> 4;
+        if (cx != cacheCx || cz != cacheCz) {
+            cacheChunk = level.getChunkSource().getChunk(cx, cz, false);
+            cacheCx = cx;
+            cacheCz = cz;
+            cacheSy = Integer.MIN_VALUE;
+        }
+        if (cacheChunk == null) return true;
+        int sy = y >> 4;
+        if (sy != cacheSy) {
+            cacheSection = cacheChunk.getSection(cacheChunk.getSectionIndexFromSectionY(sy));
+            cacheSy = sy;
+        }
+        if (cacheSection.hasOnlyAir()) return false;
+        BlockState state = cacheSection.getBlockState(x & 15, y & 15, z & 15);
+        return !state.isAir() && state.getLightBlock(level, pos.set(x, y, z)) >= 15;
     }
 
     /**
@@ -116,7 +150,7 @@ public final class SpotDepth {
         if (fwd <= 1e-4f) return 0f;
         float u = (vx * basis[0] + vy * basis[1] + vz * basis[2]) / (fwd * tanOuter);
         float v = (vx * basis[3] + vy * basis[4] + vz * basis[5]) / (fwd * tanOuter);
-        if (Math.abs(u) > 1f || Math.abs(v) > 1f) return 0f;
+        if (Math.abs(u) > 1f || Math.abs(v) > 1f) return 1f; // outside a stale map: no shadow known
         // bilinear, texel centers at (i + 0.5) / RES
         float fx = Math.max(0f, Math.min(RES - 1f, (u * 0.5f + 0.5f) * RES - 0.5f));
         float fy = Math.max(0f, Math.min(RES - 1f, (v * 0.5f + 0.5f) * RES - 0.5f));
@@ -127,6 +161,16 @@ public final class SpotDepth {
         float d01 = (depth[j1 * RES + i0] & 0xFFFF), d11 = (depth[j1 * RES + i1] & 0xFFFF);
         float d = ((d00 * (1 - ax) + d10 * ax) * (1 - ay) + (d01 * (1 - ax) + d11 * ax) * ay) / 65535f * range;
         float dist = (float) Math.sqrt(vx * vx + vy * vy + vz * vz);
-        return Math.max(0f, Math.min(1f, d + 0.75f - dist));
+        return edge(d, dist, fwd, tanOuter);
+    }
+
+    /**
+     * Visibility from the distance to the first wall (d) and to the point (dist): a ramp over about a block, widened
+     * by the world size of a texel there (2 * fwd * tanOuter / RES), so that when the map is recomputed and its rays
+     * land elsewhere, shadow edges shift as a soft change instead of flipping between lit and dark. Same in the shader.
+     */
+    public static float edge(float d, float dist, float fwd, float tanOuter) {
+        float b = Math.min(3f, 0.75f * 2f * fwd * tanOuter / RES);
+        return Math.max(0f, Math.min(1f, (d + 0.75f + b - dist) / (1f + 2f * b)));
     }
 }

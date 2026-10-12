@@ -2,6 +2,7 @@ package colorfullights;
 
 import colorfullights.beam.BeamLightBlock;
 import colorfullights.beam.BeamLights;
+import colorfullights.lamp.LampInteraction;
 import colorfullights.network.Network;
 import com.mojang.logging.LogUtils;
 import net.neoforged.bus.api.IEventBus;
@@ -45,6 +46,9 @@ public class ColorfulLights {
             if (event.getConfig().getSpec() == ServerConfig.SPEC) Network.onServerConfigChanged();
         });
         NeoForge.EVENT_BUS.addListener(Network::onPlayerLoggedIn);
+        NeoForge.EVENT_BUS.addListener(LampInteraction::onRightClickBlock);
+        NeoForge.EVENT_BUS.addListener(LampInteraction::onChangedDimension);
+        NeoForge.EVENT_BUS.addListener(LampInteraction::onRespawn);
         NeoForge.EVENT_BUS.addListener(BeamLights::onChunkLoad);
         NeoForge.EVENT_BUS.addListener(BeamLights::onLevelUnload);
         NeoForge.EVENT_BUS.addListener(BeamLights::onLevelTick);

@@ -69,6 +69,11 @@ public final class BeamLights {
     private BeamLights() {
     }
 
+    /** A lamp's settings changed: its beam is updated at the next tick. */
+    public static void refresh(ServerLevel level, BlockPos pos) {
+        data(level).urgent.add(pos.asLong());
+    }
+
     public static void init(Supplier<? extends Block> block) {
         beamLight = block;
     }
@@ -106,6 +111,7 @@ public final class BeamLights {
             data.lamps.remove(key);
             data.urgent.remove(key);
             clear(level, data, key);
+            colorfullights.lamp.LampInteraction.onLampRemoved(level, pos);
         }
     }
 
@@ -181,7 +187,9 @@ public final class BeamLights {
         Vec3 right = Vec3.atLowerCornerOf(facing.getAxis() == Direction.Axis.Y ? Direction.EAST.getNormal()
                 : facing.getClockWise().getNormal());
         Vec3 up = right.cross(dir);
-        double spread = Math.tan(Math.toRadians((lamp.inner() + lamp.outer()) * 0.5));
+        long settings = colorfullights.lamp.LampSavedData.get(level).get(lampKey);
+        float range = lamp.range() * colorfullights.lamp.LampSettings.range(settings);
+        double spread = Math.tan(Math.toRadians((lamp.inner() + lamp.outer()) * 0.5 / colorfullights.lamp.LampSettings.focus(settings)));
 
         Long2IntOpenHashMap wanted = new Long2IntOpenHashMap();
         for (int r = 0; r <= RING; r++) {
@@ -190,13 +198,13 @@ public final class BeamLights {
                 double a = 2 * Math.PI * (r - 1) / RING;
                 ray = dir.add(right.scale(Math.cos(a) * spread)).add(up.scale(Math.sin(a) * spread)).normalize();
             }
-            Vec3 end = origin.add(ray.scale(lamp.range()));
-            BlockHitResult hit = level.clip(new ClipContext(origin, end, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE,
+            Vec3 end = origin.add(ray.scale(range));
+            BlockHitResult hit = level.clip(new ClipContext(origin, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE,
                     CollisionContext.empty()));
             if (hit.getType() == HitResult.Type.MISS) continue;
             double d = origin.distanceTo(hit.getLocation());
             if (d < MIN_DISTANCE) continue;
-            int lv = (int) Math.round(lamp.level() * (1 - 0.6 * d / lamp.range()));
+            int lv = (int) Math.round(lamp.level() * (1 - 0.6 * d / range));
             lv = Math.max(1, Math.min(15, lv));
             long at = hit.getBlockPos().relative(hit.getDirection()).asLong();
             if (lv > wanted.get(at)) wanted.put(at, lv);

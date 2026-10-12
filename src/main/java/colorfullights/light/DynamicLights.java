@@ -56,6 +56,8 @@ public final class DynamicLights {
     private static final double RANGE = 96;
     /** Visibility volumes recomputed per tick at most; the nearest lights go first. */
     private static final int VOLUME_BUDGET = 6;
+    /** ... and at most about this long, so a few shadow maps don't make a tick hitch. */
+    private static final long VOLUME_TIME_NANOS = 6_000_000L;
 
     /** A spot light that turned further than this (cosine, ~2 degrees) is published again (entity lighting). */
     private static final float SPOT_PUBLISH = 0.9994f;
@@ -89,8 +91,9 @@ public final class DynamicLights {
         /** Shadow map of a long-range spot light (instead of {@link #vis}), and the basis of its rays. */
         public short[] depth;
         float[] basis;
-        /** Direction the shadow map was computed for. */
-        float ddx, ddy, ddz;
+        /** Direction and origin the shadow map was computed for (the shader looks it up in that frame). */
+        public float ddx, ddy, ddz;
+        public double sx, sy, sz;
         public int level;
         /** Saturated light color (brightest channel = 255), or -1 if unknown. */
         public int color;
@@ -196,6 +199,8 @@ public final class DynamicLights {
         final byte[][] vis;
         final int[] origin;   // ox, oy, oz per source
         final float[] dir;    // spot direction x, y, z per source (0 if none)
+        final float[] shadowPos; // origin the shadow map was computed at, x, y, z per source
+        final float[] shadowDir; // direction it was computed for
         final float[] cone;   // cosInner, cosOuter per source
         final float[] range;  // long-range spot lights: reach (0 for others)
         final float[] tanOuter;
@@ -209,6 +214,8 @@ public final class DynamicLights {
             depth = new short[count][];
             basis = new float[count][];
             dir = new float[count * 3];
+            shadowPos = new float[count * 3];
+            shadowDir = new float[count * 3];
             cone = new float[count * 2];
             pos = new float[count * 3];
             level = new int[count];
@@ -236,6 +243,12 @@ public final class DynamicLights {
                     tanOuter[i] = s.tanOuter;
                     depth[i] = s.depth;
                     basis[i] = s.basis;
+                    shadowPos[i * 3] = (float) s.sx;
+                    shadowPos[i * 3 + 1] = (float) s.sy;
+                    shadowPos[i * 3 + 2] = (float) s.sz;
+                    shadowDir[i * 3] = s.ddx;
+                    shadowDir[i * 3 + 1] = s.ddy;
+                    shadowDir[i * 3 + 2] = s.ddz;
                 }
             }
         }
@@ -415,10 +428,10 @@ public final class DynamicLights {
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity.distanceToSqr(cam) > RANGE * RANGE) continue;
             collect(entity, COLLECTOR);
-            if (CreateCompat.LOADED) CreateCompat.collect(entity, COLLECTOR);
+            if (CreateCompat.LOADED && Config.shipLights) CreateCompat.collect(entity, COLLECTOR);
             for (EntityProvider provider : ENTITY_PROVIDERS) provider.collect(entity, COLLECTOR);
         }
-        if (SableCompat.LOADED) SableCompat.collect(mc.level, cam, RANGE, COLLECTOR);
+        if (SableCompat.LOADED && Config.shipLights) SableCompat.collect(mc.level, cam, RANGE, COLLECTOR);
         for (LevelProvider provider : LEVEL_PROVIDERS) provider.collect(mc.level, cam, RANGE, COLLECTOR);
 
         boolean changed = SOURCES.values().removeIf(s -> {
@@ -466,6 +479,27 @@ public final class DynamicLights {
                 }
                 if (s.isLongSpot() && s.dx * s.ddx + s.dy * s.ddy + s.dz * s.ddz < SPOT_DEPTH_TURN) s.volumeDirty = true;
             }
+            if (s.isLongSpot() && !Config.spotShadows) {
+                // no shadows: the map has no walls, it only has to follow the cone
+                if (s.depth != SpotDepth.OPEN) {
+                    s.depth = SpotDepth.OPEN;
+                    changed = true;
+                }
+                s.basis = SpotDepth.basis(s.dx, s.dy, s.dz);
+                s.ddx = s.dx;
+                s.ddy = s.dy;
+                s.ddz = s.dz;
+                s.sx = s.x;
+                s.sy = s.y;
+                s.sz = s.z;
+                s.volumeDirty = false;
+                if (s.lightChanged) {
+                    s.lightChanged = false;
+                    changed = true;
+                    if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
+                }
+                continue;
+            }
             // Which cells a light sees barely changes over one block, so the (costly) visibility volume is only
             // recomputed once the light is 2 blocks from where it was computed (a shadow map: 1 block).
             int moved = Math.max(Math.abs(bx - s.vx), Math.max(Math.abs(by - s.vy), Math.abs(bz - s.vz)));
@@ -479,7 +513,9 @@ public final class DynamicLights {
         }
 
         pending.sort(Comparator.comparingDouble(s -> cam.distanceToSqr(s.x, s.y, s.z)));
+        long budgetEnd = System.nanoTime() + VOLUME_TIME_NANOS;
         for (int i = 0; i < pending.size() && i < VOLUME_BUDGET; i++) {
+            if (i > 0 && System.nanoTime() > budgetEnd) break; // the rest waits for the next tick, the nearest go first
             Source s = pending.get(i);
             int bx = (int) Math.floor(s.x), by = (int) Math.floor(s.y), bz = (int) Math.floor(s.z);
             long volumeStart = Timings.start();
@@ -489,6 +525,9 @@ public final class DynamicLights {
                 s.ddx = s.dx;
                 s.ddy = s.dy;
                 s.ddz = s.dz;
+                s.sx = s.x;
+                s.sy = s.y;
+                s.sz = s.z;
             } else {
                 s.vis = LightVolume.compute(mc.level, bx, by, bz, s.level);
             }
@@ -507,10 +546,19 @@ public final class DynamicLights {
         if (changed || !dirtySections.isEmpty()) publish(mc, dirtySections);
     }
 
+    /** Every light recomputes its visibility (e.g. shadows were switched on or off). Client thread. */
+    public static void invalidateVisibility() {
+        for (Source s : SOURCES.values()) {
+            s.volumeDirty = true;
+            s.depth = null;
+        }
+    }
+
     /** Called from the client thread when a block changes: lights that can see it recompute their volume. */
     public static void onBlockChanged(BlockPos pos) {
         for (Source s : SOURCES.values()) {
             if (s.depth != null) {
+                if (s.depth == SpotDepth.OPEN) continue;
                 double dx = pos.getX() + 0.5 - s.x, dy = pos.getY() + 0.5 - s.y, dz = pos.getZ() + 0.5 - s.z;
                 double r = s.range + 1;
                 if (dx * dx + dy * dy + dz * dz < r * r && dx * s.dx + dy * s.dy + dz * s.dz > -1) s.volumeDirty = true;
@@ -698,7 +746,8 @@ public final class DynamicLights {
     private static float visibility(Snapshot s, int i, float x, float y, float z, boolean corner) {
         if (s.depth[i] != null) {
             return SpotDepth.sample(s.depth[i], s.basis[i], s.tanOuter[i], s.range[i],
-                    s.pos[i * 3], s.pos[i * 3 + 1], s.pos[i * 3 + 2], s.dir[i * 3], s.dir[i * 3 + 1], s.dir[i * 3 + 2], x, y, z);
+                    s.shadowPos[i * 3], s.shadowPos[i * 3 + 1], s.shadowPos[i * 3 + 2],
+                    s.shadowDir[i * 3], s.shadowDir[i * 3 + 1], s.shadowDir[i * 3 + 2], x, y, z);
         }
         byte[] vis = s.vis[i];
         int ox = s.origin[i * 3], oy = s.origin[i * 3 + 1], oz = s.origin[i * 3 + 2];
