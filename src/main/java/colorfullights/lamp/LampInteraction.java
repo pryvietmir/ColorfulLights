@@ -45,9 +45,12 @@ public final class LampInteraction {
         if (stack.isEmpty() || DirectionalLamps.isEmpty()) return;
         Level level = event.getLevel();
         BlockPos pos = event.getPos();
-        if (DirectionalLamps.of(level.getBlockState(pos)) == null) return;
+        DirectionalLamps.Lamp lamp = DirectionalLamps.of(level.getBlockState(pos));
+        if (lamp == null) return;
         boolean dye = stack.getItem() instanceof DyeItem;
         if (!dye && !isWrench(stack)) return;
+        // lamps that hold several heads dye each head themselves (the beam takes the head's color)
+        if (dye && lamp.heads() != null) return;
 
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);

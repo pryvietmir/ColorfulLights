@@ -31,7 +31,7 @@ final class SableSubLevels {
     /** Sub-level lamps are rescanned this often even without a known block change (plot chunks may stream in). */
     private static final int RESCAN_TICKS = 40;
 
-    private record Emitter(Vec3 plotPos, BlockState state) {
+    private record Emitter(Vec3 plotPos, BlockState state, net.minecraft.world.level.block.entity.BlockEntity blockEntity) {
     }
 
     private static final class Cached {
@@ -69,8 +69,11 @@ final class SableSubLevels {
                 long key = base | ((long) Math.floor(p.x) & 0x7FF) << 21 | ((long) Math.floor(p.y) & 0x3FF) << 11
                         | ((long) Math.floor(p.z) & 0x7FF);
                 // directional lamps (headlights) shine along the ship's turn
+                colorfullights.DirectionalLamps.Lamp lamp = colorfullights.DirectionalLamps.of(e.state());
+                java.util.List<colorfullights.DirectionalLamps.Head> heads = lamp != null && lamp.heads() != null
+                        ? lamp.heads().fromBlockEntity(e.state(), e.blockEntity()) : null;
                 if (LampLights.addMoving(collector, key, p, e.state(), (v, pt) -> subLevel.renderPose(pt).transformPosition(v),
-                        colorfullights.lamp.LampSettings.client(BlockPos.containing(p).asLong()))) continue;
+                        colorfullights.lamp.LampSettings.client(BlockPos.containing(p).asLong()), heads)) continue;
                 collector.add(key, () -> pt -> subLevel.renderPose(pt).transformPosition(p),
                         e.state(), e.state().getLightEmission());
             }
@@ -113,7 +116,8 @@ final class SableSubLevels {
                         for (int x = 0; x < 16; x++) {
                             BlockState state = section.getBlockState(x, y, z);
                             if (state.getLightEmission() <= 0) continue;
-                            out.add(new Emitter(new Vec3(cp.getMinBlockX() + x + 0.5, baseY + y + 0.5, cp.getMinBlockZ() + z + 0.5), state));
+                            BlockPos pos = new BlockPos(cp.getMinBlockX() + x, baseY + y, cp.getMinBlockZ() + z);
+                            out.add(new Emitter(Vec3.atCenterOf(pos), state, state.hasBlockEntity() ? chunk.getBlockEntity(pos) : null));
                             if (out.size() >= MAX_PER_SUB_LEVEL) return out;
                         }
             }

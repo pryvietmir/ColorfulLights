@@ -180,6 +180,10 @@ public final class BeamLights {
             clear(level, data, lampKey);
             return;
         }
+        if (!DirectionalLamps.isLit(state)) {
+            clear(level, data, lampKey); // switched off: stays a lamp, but without a beam
+            return;
+        }
 
         Direction facing = DirectionalLamps.direction(lamp, state);
         Vec3 dir = Vec3.atLowerCornerOf(facing.getNormal());

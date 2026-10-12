@@ -2,6 +2,7 @@ package colorfullights.compat;
 
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
 import com.simibubi.create.content.contraptions.Contraption;
+import colorfullights.DirectionalLamps;
 import colorfullights.light.DynamicLights;
 import colorfullights.light.LampLights;
 import net.minecraft.core.BlockPos;
@@ -23,7 +24,7 @@ final class CreateContraptions {
     /** A contraption can carry lots of lamps; beyond this they add rebuild cost without visible benefit. */
     private static final int MAX_PER_CONTRAPTION = 32;
 
-    private record Emitter(Vec3 local, BlockState state) {
+    private record Emitter(Vec3 local, BlockState state, List<DirectionalLamps.Head> heads) {
     }
 
     private record Cached(int blockCount, List<Emitter> emitters) {
@@ -46,7 +47,12 @@ final class CreateContraptions {
             List<Emitter> emitters = new ArrayList<>();
             for (Map.Entry<BlockPos, StructureTemplate.StructureBlockInfo> entry : blocks.entrySet()) {
                 BlockState state = entry.getValue().state();
-                if (state.getLightEmission() > 0) emitters.add(new Emitter(Vec3.atCenterOf(entry.getKey()), state));
+                if (state.getLightEmission() <= 0) continue;
+                // lamps that hold several heads keep them in their block entity data
+                DirectionalLamps.Lamp lamp = DirectionalLamps.of(state);
+                List<DirectionalLamps.Head> heads = lamp != null && lamp.heads() != null
+                        ? lamp.heads().fromTag(state, entry.getValue().nbt()) : null;
+                emitters.add(new Emitter(Vec3.atCenterOf(entry.getKey()), state, heads));
                 if (emitters.size() >= MAX_PER_CONTRAPTION) break;
             }
             cached = new Cached(blocks.size(), emitters);
@@ -61,7 +67,7 @@ final class CreateContraptions {
                     | (p.getX() & 0xFFL) << 16 | (p.getY() & 0xFFL) << 8 | (p.getZ() & 0xFFL);
             Vec3 local = e.local();
             // directional lamps (headlights) shine along the contraption's turn
-            if (LampLights.addMoving(collector, key, local, e.state(), (v, pt) -> toGlobal(entity, v, pt), 0L)) continue;
+            if (LampLights.addMoving(collector, key, local, e.state(), (v, pt) -> toGlobal(entity, v, pt), 0L, e.heads())) continue;
             collector.add(key, () -> pt -> toGlobal(entity, local, pt), e.state(), e.state().getLightEmission());
         }
     }

@@ -42,7 +42,7 @@ public final class LampLights {
                     for (long e : emitters) {
                         BlockState state = Block.stateById(EmitterTracker.stateId(e));
                         DirectionalLamps.Lamp lamp = DirectionalLamps.of(state);
-                        if (lamp == null) continue;
+                        if (lamp == null || !DirectionalLamps.isLit(state)) continue;
                         int local = EmitterTracker.localPos(e);
                         BlockPos pos = new BlockPos(sx << 4 | (local >> 8 & 15), sy << 4 | (local >> 4 & 15), sz << 4 | (local & 15));
                         double d2 = camera.distanceToSqr(Vec3.atCenterOf(pos));
@@ -56,37 +56,70 @@ public final class LampLights {
             Found f = found.get(i);
             Direction d = DirectionalLamps.direction(f.lamp(), f.state());
             Vec3 dir = Vec3.atLowerCornerOf(d.getNormal());
-            Vec3 origin = Vec3.atCenterOf(f.pos()).add(dir.scale(0.3));
+            Vec3 center = Vec3.atCenterOf(f.pos());
             // the key includes the state, so turning the lamp makes a new source
             long key = Long.MIN_VALUE | 1L << 62
                     | ((f.pos().asLong() ^ Block.getId(f.state()) * 0x9E3779B97F4A7C15L) & 0x3FFFFFFFFFFFFFFFL);
-            add(collector, key, pt -> origin, pt -> dir, f.state(), f.lamp(), LampSettings.client(f.pos().asLong()));
+            long settings = LampSettings.client(f.pos().asLong());
+            if (f.lamp().heads() == null) {
+                Vec3 origin = center.add(dir.scale(0.3));
+                add(collector, key, pt -> origin, pt -> dir, f.state(), f.lamp(), settings, -1);
+                continue;
+            }
+            List<DirectionalLamps.Head> heads = f.lamp().heads().fromBlockEntity(f.state(), level.getBlockEntity(f.pos()));
+            for (int h = 0; h < heads.size(); h++) {
+                Vec3 origin = center.add(heads.get(h).offset());
+                add(collector, headKey(key, h), pt -> origin, pt -> dir, f.state(), f.lamp(), settings, heads.get(h).color());
+            }
         }
+    }
+
+    /** Key of one of several lamps of a block (bits 58-61 are free in the keys of lamps on contraptions and ships). */
+    private static long headKey(long key, int head) {
+        return key ^ ((long) (head + 1) << 58);
     }
 
     /**
      * The beam of a lamp on something moving (a contraption, a ship): {@code toWorld} turns a position in the
-     * lamp's local frame into a world position at a partial tick, {@code settings} are the lamp's {@link LampSettings}. Returns false if the state isn't a lamp.
+     * lamp's local frame into a world position at a partial tick, {@code settings} are the lamp's {@link LampSettings},
+     * {@code heads} the lamps of a block holding several (see {@link DirectionalLamps.Heads}; null: one lamp).
+     * Returns false if the state isn't a lamp that shines.
      */
     public static boolean addMoving(DynamicLights.Collector collector, long key, Vec3 localCenter, BlockState state,
-                                    java.util.function.BiFunction<Vec3, Float, Vec3> toWorld, long settings) {
+                                    java.util.function.BiFunction<Vec3, Float, Vec3> toWorld, long settings,
+                                    List<DirectionalLamps.Head> heads) {
         DirectionalLamps.Lamp lamp = DirectionalLamps.of(state);
-        if (lamp == null || !Config.spotLights) return false;
+        if (lamp == null || !Config.spotLights || !DirectionalLamps.isLit(state)) return false;
         Vec3 localDir = Vec3.atLowerCornerOf(DirectionalLamps.direction(lamp, state).getNormal());
-        Vec3 localOrigin = localCenter.add(localDir.scale(0.3));
+        if (lamp.heads() == null) {
+            addMovingHead(collector, key, localCenter.add(localDir.scale(0.3)), localDir, state, lamp, toWorld, settings, -1);
+        } else if (heads != null) {
+            for (int h = 0; h < heads.size(); h++) {
+                addMovingHead(collector, headKey(key, h), localCenter.add(heads.get(h).offset()), localDir, state, lamp,
+                        toWorld, settings, heads.get(h).color());
+            }
+        }
+        return true;
+    }
+
+    private static void addMovingHead(DynamicLights.Collector collector, long key, Vec3 localOrigin, Vec3 localDir,
+                                      BlockState state, DirectionalLamps.Lamp lamp,
+                                      java.util.function.BiFunction<Vec3, Float, Vec3> toWorld, long settings, int headColor) {
         Vec3 localAhead = localOrigin.add(localDir);
         add(collector, key, pt -> toWorld.apply(localOrigin, pt), pt -> {
             Vec3 a = toWorld.apply(localOrigin, pt);
             Vec3 d = toWorld.apply(localAhead, pt).subtract(a);
             double len = d.length();
             return len > 1e-6 ? d.scale(1 / len) : new Vec3(0, 0, 1);
-        }, state, lamp, settings);
-        return true;
+        }, state, lamp, settings, headColor);
     }
 
     private static void add(DynamicLights.Collector collector, long key, DynamicLights.Positioner origin,
-                            DynamicLights.Positioner direction, BlockState state, DirectionalLamps.Lamp lamp, long settings) {
+                            DynamicLights.Positioner direction, BlockState state, DirectionalLamps.Lamp lamp, long settings,
+                            int headColor) {
+        // painted with a dye (our settings, or the lamp's own dye), else the color for all lamps, else its own
         int color = LampSettings.color(settings);
+        if (color < 0) color = headColor;
         if (color < 0) color = DirectionalLamps.colorOf(lamp);
         if (color < 0) color = LightColors.colorOf(Block.getId(state));
         float focus = Config.spotFocus * LampSettings.focus(settings);
