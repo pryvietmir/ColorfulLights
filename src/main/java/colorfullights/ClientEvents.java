@@ -59,5 +59,6 @@ final class ClientEvents {
 
     static void onFrameStart(RenderFrameEvent.Pre event) {
         DynamicLightShader.onFrameStart();
+        Timings.frame();
     }
 }

@@ -10,6 +10,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.entity.Entity;
@@ -25,6 +26,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
@@ -54,10 +56,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class DynamicLights {
     /** Only entities this close to the camera emit dynamic light. */
     private static final double RANGE = 96;
-    /** Visibility volumes recomputed per tick at most; the nearest lights go first. */
+    /** Visibility volumes recomputed per tick at most; the lights that matter most for the frame go first. */
     private static final int VOLUME_BUDGET = 6;
-    /** ... and at most about this long, so a few shadow maps don't make a tick hitch. */
-    private static final long VOLUME_TIME_NANOS = 6_000_000L;
+    /** ... and at most about this long, so a few shadow maps don't make a frame hitch (the rest waits a tick). */
+    private static final long VOLUME_TIME_NANOS = 2_500_000L;
+    /** A light that isn't selected only recomputes its (stale) visibility once it is this far from it. */
+    private static final int UNSELECTED_MOVE = 6;
+    /** Baked into meshes: a moving light rebuilds the meshes around it at most this often (ticks). */
+    private static final int MESH_INTERVAL = 4;
+    /** Score bonus of lights that were selected last tick, so the selection doesn't flicker. */
+    private static final float KEEP_SELECTED = 1.5f;
+    /** Lights whose bounds are outside the view keep this share of their score (they still light entities). */
+    private static final float OFF_SCREEN = 0.05f;
 
     /** A spot light that turned further than this (cosine, ~2 degrees) is published again (entity lighting). */
     private static final float SPOT_PUBLISH = 0.9994f;
@@ -90,7 +100,7 @@ public final class DynamicLights {
         public float tanOuter;
         /** Shadow map of a long-range spot light (instead of {@link #vis}), and the basis of its rays. */
         public short[] depth;
-        float[] basis;
+        public float[] basis;
         /** Direction and origin the shadow map was computed for (the shader looks it up in that frame). */
         public float ddx, ddy, ddz;
         public double sx, sy, sz;
@@ -115,6 +125,16 @@ public final class DynamicLights {
         /** Block the light was in at the last tick. */
         int bx = Integer.MIN_VALUE, by, bz;
         boolean volumeDirty = true;
+
+        /** How much the light shows in the frame (see {@link #score}), and whether it's among the lights drawn. */
+        public float score;
+        public boolean selected;
+        /** How far a long-range spot light's beam gets before its shadow map stops it (≤ range). */
+        public float depthReach;
+        /** Block the light was at when meshes were last rebuilt for it (baked lights), the tick that happened. */
+        int mbx = Integer.MIN_VALUE, mby, mbz;
+        long meshTick = Long.MIN_VALUE;
+        boolean meshPending;
 
         Source(long key, Positioner positioner) {
             this.key = key;
@@ -410,13 +430,16 @@ public final class DynamicLights {
         }
     }
 
+    private static long tickCount;
+
     private static void tickImpl(Minecraft mc) {
         LongSet dirtySections = new LongOpenHashSet();
         boolean baked = !inShader();
+        tickCount++;
 
         if (!Config.enabled || !Config.dynamicLights || mc.level == null || !LightColors.isReady()) {
             if (!SOURCES.isEmpty()) {
-                if (baked) SOURCES.values().forEach(s -> addReach(s, dirtySections, s.bx, s.by, s.bz));
+                if (baked) SOURCES.values().forEach(s -> unbake(s, dirtySections));
                 SOURCES.clear();
                 publish(mc, dirtySections);
             }
@@ -436,24 +459,20 @@ public final class DynamicLights {
 
         boolean changed = SOURCES.values().removeIf(s -> {
             if (s.seen) return false;
-            if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
+            if (baked) unbake(s, dirtySections);
             return true;
         });
 
-        List<Source> pending = new ArrayList<>();
+        // positions and directions
         for (Source s : SOURCES.values()) {
             Vec3 p = s.tickPosition();
             int bx = (int) Math.floor(p.x), by = (int) Math.floor(p.y), bz = (int) Math.floor(p.z);
             if (bx != s.bx || by != s.by || bz != s.bz) {
-                // moved to another block: publish the new position; baked meshes around both positions rebuild
-                if (baked) {
-                    addReach(s, dirtySections, s.bx, s.by, s.bz);
-                    addReach(s, dirtySections, bx, by, bz);
-                }
                 s.bx = bx;
                 s.by = by;
                 s.bz = bz;
                 changed = true;
+                if (baked && s.selected) s.meshPending = true; // meshes follow, at most every MESH_INTERVAL ticks
             }
             s.x = p.x;
             s.y = p.y;
@@ -470,21 +489,29 @@ public final class DynamicLights {
                     s.pdz = s.dz;
                     changed = true;
                 }
-                if (baked && s.dx * s.bdx + s.dy * s.bdy + s.dz * s.bdz < SPOT_TURN) {
+                if (baked && s.selected && s.dx * s.bdx + s.dy * s.bdy + s.dz * s.bdz < SPOT_TURN) {
                     // baked meshes follow in bigger steps
                     s.bdx = s.dx;
                     s.bdy = s.dy;
                     s.bdz = s.dz;
-                    addReach(s, dirtySections, s.bx, s.by, s.bz);
+                    s.meshPending = true;
                 }
                 if (s.isLongSpot() && s.dx * s.ddx + s.dy * s.ddy + s.dz * s.ddz < SPOT_DEPTH_TURN) s.volumeDirty = true;
             }
+        }
+
+        // the lights that show most in the frame are drawn (shader), baked (meshes) and kept up to date first
+        if (select(mc, cam, baked, dirtySections)) changed = true;
+
+        List<Source> pending = new ArrayList<>();
+        for (Source s : SOURCES.values()) {
             if (s.isLongSpot() && !Config.spotShadows) {
                 // no shadows: the map has no walls, it only has to follow the cone
                 if (s.depth != SpotDepth.OPEN) {
                     s.depth = SpotDepth.OPEN;
                     changed = true;
                 }
+                s.depthReach = s.range;
                 s.basis = SpotDepth.basis(s.dx, s.dy, s.dz);
                 s.ddx = s.dx;
                 s.ddy = s.dy;
@@ -496,31 +523,34 @@ public final class DynamicLights {
                 if (s.lightChanged) {
                     s.lightChanged = false;
                     changed = true;
-                    if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
+                    if (baked && s.selected) s.meshPending = true;
                 }
                 continue;
             }
             // Which cells a light sees barely changes over one block, so the (costly) visibility volume is only
-            // recomputed once the light is 2 blocks from where it was computed (a shadow map: 1 block).
-            int moved = Math.max(Math.abs(bx - s.vx), Math.max(Math.abs(by - s.vy), Math.abs(bz - s.vz)));
-            if (moved >= (s.isLongSpot() ? 1 : 2)) s.volumeDirty = true;
+            // recomputed once the light is 2 blocks from where it was computed (a shadow map: 1 block). Lights
+            // that aren't drawn put up with a staler one.
+            int moved = Math.max(Math.abs(s.bx - s.vx), Math.max(Math.abs(s.by - s.vy), Math.abs(s.bz - s.vz)));
+            if (moved >= (!s.selected ? UNSELECTED_MOVE : s.isLongSpot() ? 1 : 2)) s.volumeDirty = true;
             if (s.volumeDirty) pending.add(s);
             if (s.lightChanged) {
                 s.lightChanged = false;
                 changed = true;
-                if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
+                if (baked && s.selected) s.meshPending = true;
             }
         }
 
-        pending.sort(Comparator.comparingDouble(s -> cam.distanceToSqr(s.x, s.y, s.z)));
+        pending.sort(Comparator.comparingDouble((Source s) -> -s.score));
         long budgetEnd = System.nanoTime() + VOLUME_TIME_NANOS;
         for (int i = 0; i < pending.size() && i < VOLUME_BUDGET; i++) {
-            if (i > 0 && System.nanoTime() > budgetEnd) break; // the rest waits for the next tick, the nearest go first
+            if (i > 0 && System.nanoTime() > budgetEnd) break; // the rest waits for the next tick, the most visible go first
             Source s = pending.get(i);
             int bx = (int) Math.floor(s.x), by = (int) Math.floor(s.y), bz = (int) Math.floor(s.z);
             long volumeStart = Timings.start();
-            if (s.isLongSpot()) {
+            boolean spot = s.isLongSpot();
+            if (spot) {
                 s.depth = SpotDepth.compute(mc.level, s.x, s.y, s.z, s.dx, s.dy, s.dz, s.tanOuter, s.range);
+                s.depthReach = SpotDepth.reach(s.depth, s.range);
                 s.basis = SpotDepth.basis(s.dx, s.dy, s.dz);
                 s.ddx = s.dx;
                 s.ddy = s.dy;
@@ -531,7 +561,7 @@ public final class DynamicLights {
             } else {
                 s.vis = LightVolume.compute(mc.level, bx, by, bz, s.level);
             }
-            Timings.end(Timings.Part.LIGHT_VOLUME, volumeStart);
+            Timings.end(spot ? Timings.Part.SPOT_DEPTH : Timings.Part.LIGHT_VOLUME, volumeStart);
             s.ox = bx - LightVolume.CENTER;
             s.oy = by - LightVolume.CENTER;
             s.oz = bz - LightVolume.CENTER;
@@ -539,11 +569,121 @@ public final class DynamicLights {
             s.vy = by;
             s.vz = bz;
             s.volumeDirty = false;
-            if (baked) addReach(s, dirtySections, s.bx, s.by, s.bz);
+            if (baked && s.selected) s.meshPending = true;
             changed = true;
         }
 
+        // baked lights rebuild the meshes around where they were and where they are now, not too often
+        if (baked) {
+            for (Source s : SOURCES.values()) {
+                if (s.meshPending && s.selected && tickCount - s.meshTick >= MESH_INTERVAL) rebake(s, dirtySections);
+            }
+        }
+
         if (changed || !dirtySections.isEmpty()) publish(mc, dirtySections);
+        Timings.counts(SOURCES.size(), -1);
+    }
+
+    /**
+     * Scores every light by how much it shows in the frame and selects the best {@link Config#maxDynamicLights}.
+     * Returns whether the selection changed. Baked lights entering or leaving the selection rebuild their meshes.
+     */
+    private static boolean select(Minecraft mc, Vec3 cam, boolean baked, LongSet dirtySections) {
+        Frustum frustum = mc.levelRenderer.getFrustum();
+        List<Source> all = new ArrayList<>(SOURCES.values());
+        for (Source s : all) {
+            s.score = score(s, cam, frustum);
+            if (s.selected) s.score *= KEEP_SELECTED;
+        }
+        all.sort(Comparator.comparingDouble((Source s) -> -s.score));
+        int limit = Math.min(DynamicLightShader.MAX_LIGHTS, Config.maxDynamicLights);
+        boolean changed = false;
+        for (int i = 0; i < all.size(); i++) {
+            Source s = all.get(i);
+            boolean selected = i < limit;
+            if (selected == s.selected) continue;
+            s.selected = selected;
+            changed = true;
+            if (!baked) continue;
+            if (selected) {
+                s.meshPending = true;
+                s.meshTick = Long.MIN_VALUE / 2; // bake right away
+            } else {
+                unbake(s, dirtySections);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * How much a light shows in the frame: roughly the solid angle of the space it lights, seen from the camera,
+     * times its brightness. The space is a sphere of its reach, or for a long-range spot light the sphere around
+     * its cone up to where its shadow map stops it, so a lamp behind the camera or a corner whose beam reaches
+     * into view counts by its beam. Lights whose space is out of view keep a small share (they still light
+     * entities near them).
+     */
+    private static float score(Source s, Vec3 cam, Frustum frustum) {
+        if (s.isLongSpot()) {
+            return spotScore(cam, s.x, s.y, s.z, s.dx, s.dy, s.dz, s.depthReach > 0f ? s.depthReach : s.range,
+                    s.tanOuter, s.level, frustum);
+        }
+        double r = Math.max(1f, s.reach());
+        double d = Math.max(1.0, Math.sqrt(cam.distanceToSqr(s.x, s.y, s.z)) - r);
+        float score = (float) (s.level / 15.0 * (r / d) * (r / d));
+        if (frustum != null && !frustum.isVisible(new AABB(s.x - r, s.y - r, s.z - r, s.x + r, s.y + r, s.z + r))) {
+            score *= OFF_SCREEN;
+        }
+        return score;
+    }
+
+    /** Score of being inside a beam: such beams always win (they fill the view, the camera sees by them). */
+    private static final float IN_BEAM = 1000f;
+
+    /**
+     * {@link #score} of a beam from (x, y, z) along unit (dx, dy, dz), {@code length} blocks long (where its shadow
+     * map stops it), opening by tan: by the distance from the camera to the cone itself (not to a sphere around
+     * it), the size of the cone, and whether its bounds are in view. A camera inside the cone gets the most.
+     */
+    public static float spotScore(Vec3 cam, double x, double y, double z, double dx, double dy, double dz,
+                                  float length, float tanOuter, int level, Frustum frustum) {
+        double tan = Math.min(4.0, tanOuter);
+        double vx = cam.x - x, vy = cam.y - y, vz = cam.z - z;
+        double along = vx * dx + vy * dy + vz * dz;
+        double t = Math.max(0.0, Math.min(length, along));
+        double px = vx - dx * t, py = vy - dy * t, pz = vz - dz * t;
+        double off = Math.sqrt(px * px + py * py + pz * pz);
+        // distance to the cone's surface (0 inside)
+        double outside = off - t * tan;
+        double size = length * Math.sqrt(0.25 + tan * tan);
+        if (along > 0.0 && along < length && outside <= 0.0) return IN_BEAM * level / 15f;
+        double d = Math.max(1.0, outside + Math.max(0.0, along - length) + Math.max(0.0, -along));
+        float score = (float) (level / 15.0 * (size / d) * (size / d));
+        if (frustum != null) {
+            double cx = x + dx * length * 0.5, cy = y + dy * length * 0.5, cz = z + dz * length * 0.5;
+            double r = size;
+            if (!frustum.isVisible(new AABB(cx - r, cy - r, cz - r, cx + r, cy + r, cz + r))) score *= OFF_SCREEN;
+        }
+        return score;
+    }
+
+    /** Rebuilds the meshes a baked light lit before and lights now. */
+    private static void rebake(Source s, LongSet dirtySections) {
+        if (s.mbx != Integer.MIN_VALUE) addReach(s, dirtySections, s.mbx, s.mby, s.mbz);
+        addReach(s, dirtySections, s.bx, s.by, s.bz);
+        if (s.isReady()) {
+            s.mbx = s.bx;
+            s.mby = s.by;
+            s.mbz = s.bz;
+        }
+        s.meshTick = tickCount;
+        s.meshPending = false;
+    }
+
+    /** A baked light goes (removed or no longer selected): the meshes it lit are rebuilt without it. */
+    private static void unbake(Source s, LongSet dirtySections) {
+        if (s.mbx != Integer.MIN_VALUE) addReach(s, dirtySections, s.mbx, s.mby, s.mbz);
+        s.mbx = Integer.MIN_VALUE;
+        s.meshPending = false;
     }
 
     /** Every light recomputes its visibility (e.g. shadows were switched on or off). Client thread. */
@@ -554,8 +694,15 @@ public final class DynamicLights {
         }
     }
 
-    /** Called from the client thread when a block changes: lights that can see it recompute their volume. */
-    public static void onBlockChanged(BlockPos pos) {
+    /**
+     * Called from the client thread when a block changes: lights that can see it recompute their volume, if the
+     * change matters to light (how much the block stops light). Air turning into an invisible beam light, a torch
+     * being placed or crops growing leave every light as it is.
+     */
+    public static void onBlockChanged(BlockPos pos, BlockState oldState, BlockState newState) {
+        if (SOURCES.isEmpty()) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level != null && lightBlock(mc.level, pos, oldState) == lightBlock(mc.level, pos, newState)) return;
         for (Source s : SOURCES.values()) {
             if (s.depth != null) {
                 if (s.depth == SpotDepth.OPEN) continue;
@@ -572,13 +719,25 @@ public final class DynamicLights {
         }
     }
 
+    private static int lightBlock(ClientLevel level, BlockPos pos, BlockState state) {
+        return state.isAir() ? 0 : state.getLightBlock(level, pos);
+    }
+
     /**
      * Dynamic light switched between being drawn by the shader and being baked into meshes: rebuilds the chunk
      * sections the current lights reach, so baked light is added or removed there.
      */
     public static void onRenderModeChanged(Minecraft mc) {
         LongSet sections = new LongOpenHashSet();
-        for (Source s : SOURCES.values()) addReach(s, sections, s.bx, s.by, s.bz);
+        boolean baked = !inShader();
+        for (Source s : SOURCES.values()) {
+            if (!s.selected) continue;
+            if (baked) {
+                rebake(s, sections);
+            } else {
+                unbake(s, sections);
+            }
+        }
         publish(mc, sections);
     }
 
@@ -591,7 +750,7 @@ public final class DynamicLights {
     private static void publish(Minecraft mc, LongSet dirtySections) {
         List<Source> ready = new ArrayList<>();
         for (Source s : SOURCES.values()) {
-            if (s.isReady()) ready.add(s);
+            if (s.isReady() && s.selected) ready.add(s);
         }
         current = ready.isEmpty() ? EMPTY : new Snapshot(ready);
         VERSION.incrementAndGet();

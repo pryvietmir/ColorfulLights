@@ -53,8 +53,10 @@ public final class VolumetricBeams {
     private static final int SEGMENTS = 32;
     /** Beams further than this from the camera aren't drawn. */
     private static final double MAX_DISTANCE = 160;
+    /** ... and fade out over the last this many blocks before that. */
+    private static final double FADE_DISTANCE = 48;
     /** Widest cone drawn (half angle); wider lamps are cut there. Cosine of 75 degrees. */
-    private static final float MIN_COS_OUTER = (float) Math.cos(Math.toRadians(75));
+    static final float MIN_COS_OUTER = (float) Math.cos(Math.toRadians(75));
     /** Overall scale of the scattered light, tuned so a lamp at the default haze is a faint beam. */
     private static final float SCATTER = 0.35f;
     /** Texture units used while drawing (what was bound there is restored afterwards). */
@@ -71,7 +73,9 @@ public final class VolumetricBeams {
             uniform vec2 u_Size;       // x: radius of the cap, y: length
             out vec3 v_Pos;
             void main() {
-                vec3 p = u_LightPos + (a_Pos.x * u_Right + a_Pos.y * u_Up) * u_Size.x + a_Pos.z * u_Size.y * u_Dir;
+                // (right, -up, dir) is right-handed (right x up = -dir), so the mesh's outward faces stay
+                // counter-clockwise: from outside and from inside alike, the far side is back-facing
+                vec3 p = u_LightPos + (a_Pos.x * u_Right - a_Pos.y * u_Up) * u_Size.x + a_Pos.z * u_Size.y * u_Dir;
                 v_Pos = p;
                 gl_Position = u_ViewProj * vec4(p, 1.0);
             }
@@ -89,6 +93,9 @@ public final class VolumetricBeams {
             uniform vec4 u_Cone;       // x: cos inner, y: cos outer, z: range, w: tan outer
             uniform vec4 u_ShadowPos;  // xyz: camera-relative origin of the shadow map, w: slab (-1: no shadows)
             uniform vec4 u_ShadowDir;  // xyz: direction of the shadow map, w: its tan outer
+            uniform vec3 u_ShadowRight; // basis of the shadow map's rays (see SpotDepth.basis)
+            uniform vec3 u_ShadowUp;
+            uniform float u_Cap;       // length of the drawn cone: where the shadow map stops the whole beam
             uniform vec3 u_Color;      // light color times strength
             uniform int u_Steps;
             uniform float u_Noise;
@@ -102,9 +109,7 @@ public final class VolumetricBeams {
                 vec3 v = p - u_ShadowPos.xyz;
                 float fwd = dot(v, dir);
                 if (fwd <= 1e-4) return 1.0;
-                vec3 right = normalize(cross(dir, abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-                vec3 up = cross(right, dir);
-                vec2 uv = vec2(dot(v, right), dot(v, up)) / (fwd * u_ShadowDir.w);
+                vec2 uv = vec2(dot(v, u_ShadowRight), dot(v, u_ShadowUp)) / (fwd * u_ShadowDir.w);
                 if (abs(uv.x) > 1.0 || abs(uv.y) > 1.0) return 1.0;
                 vec2 t = clamp(uv * 0.5 + 0.5, vec2(0.5 / SPOT_RES.0), vec2(1.0 - 0.5 / SPOT_RES.0));
                 float d = texture(u_Shadow, vec2(t.x, (u_ShadowPos.w + t.y) / MAX_BEAMS.0)).r * u_Cone.z;
@@ -115,7 +120,7 @@ public final class VolumetricBeams {
             // whether a point (relative to the apex) is inside the finite cone
             bool inside(vec3 q) {
                 float f = dot(q, u_Dir);
-                return f > 0.0 && f < u_Cone.z && f * f > dot(q, q) * u_Cone.y * u_Cone.y;
+                return f > 0.0 && f < u_Cap && f * f > dot(q, q) * u_Cone.y * u_Cone.y;
             }
 
             void main() {
@@ -126,6 +131,7 @@ public final class VolumetricBeams {
                 vec3 v = u_Dir;
                 float cos2 = u_Cone.y * u_Cone.y;
                 float L = u_Cone.z;
+                float cap = u_Cap;
 
                 // where the ray crosses the cone's side and cap (the cone is convex: at most an entry and an exit);
                 // no arrays, as dynamically indexed arrays are unreliable on some drivers
@@ -140,13 +146,13 @@ public final class VolumetricBeams {
                     float s = sqrt(disc);
                     float r0 = (-b - s) / (2.0 * a), r1 = (-b + s) / (2.0 * a);
                     float f0 = cv + r0 * dv, f1 = cv + r1 * dv;
-                    if (r0 > 0.0 && f0 >= 0.0 && f0 <= L) h0 = r0;
-                    if (r1 > 0.0 && f1 >= 0.0 && f1 <= L) h1 = r1;
+                    if (r0 > 0.0 && f0 >= 0.0 && f0 <= cap) h0 = r0;
+                    if (r1 > 0.0 && f1 >= 0.0 && f1 <= cap) h1 = r1;
                 }
                 if (abs(dv) > 1e-6) {
-                    float tc = (L - cv) / dv;
-                    vec3 q = co + rd * tc - v * L;
-                    if (tc > 0.0 && dot(q, q) <= L * L * u_Cone.w * u_Cone.w) h2 = tc;
+                    float tc = (cap - cv) / dv;
+                    vec3 q = co + rd * tc - v * cap;
+                    if (tc > 0.0 && dot(q, q) <= cap * cap * u_Cone.w * u_Cone.w) h2 = tc;
                 }
                 // the two nearest crossings
                 float first = min(h0, min(h1, h2));
@@ -174,9 +180,11 @@ public final class VolumetricBeams {
                 // dithered steps (interleaved gradient noise, shifted every frame)
                 vec2 px = gl_FragCoord.xy + u_Noise;
                 float jitter = fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
-                float dt = (tOut - tIn) / float(u_Steps);
+                // about a step per block of beam crossed, up to the configured number: short chords are cheap
+                int steps = clamp(int(ceil((tOut - tIn) * 1.2)), 3, u_Steps);
+                float dt = (tOut - tIn) / float(steps);
                 float sum = 0.0;
-                for (int i = 0; i < u_Steps; i++) {
+                for (int i = 0; i < steps; i++) {
                     vec3 p = rd * (tIn + (float(i) + jitter) * dt);
                     vec3 toP = p - u_LightPos;
                     float dist = length(toP);
@@ -188,7 +196,8 @@ public final class VolumetricBeams {
                     float fade = (1.0 - dist / L) * (1.0 + 1.5 / (1.0 + 0.2 * dist * dist));
                     // Henyey-Greenstein towards the eye (relative to isotropic), mixed with some isotropic scattering
                     float cosT = dot(l, -rd);
-                    float hg = (1.0 - G * G) / pow(1.0 + G * G - 2.0 * G * cosT, 1.5);
+                    float k = 1.0 + G * G - 2.0 * G * cosT;
+                    float hg = (1.0 - G * G) / (k * sqrt(k));
                     float phase = 0.3 + 0.7 * hg;
                     sum += cone * fade * fade * phase * shadow(p);
                 }
@@ -201,6 +210,90 @@ public final class VolumetricBeams {
     private static boolean failed;
     private static int program, vao, vbo, vertexCount;
     private static int fbo, fboColor = -1, fboWidth, fboHeight;
+    /** Quarter-size buffer for drawing the beams at half resolution, and the program adding it onto the frame. */
+    private static int halfFbo, halfTexture, halfWidth, halfHeight;
+    private static int compositeProgram, uCompositeTex;
+
+    private static final String COMPOSITE_VERTEX = """
+            #version 150
+            out vec2 v_Uv;
+            void main() {
+                vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+                v_Uv = p;
+                gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+            }
+            """;
+
+    private static final String COMPOSITE_FRAGMENT = """
+            #version 150
+            in vec2 v_Uv;
+            uniform sampler2D u_Tex;
+            out vec4 fragColor;
+            void main() {
+                // many beams add up: compress the sum softly so standing among lamps glows but never turns white
+                vec3 c = texture(u_Tex, v_Uv).rgb;
+                float m = max(c.r, max(c.g, c.b));
+                fragColor = vec4(c * (LIMIT / (LIMIT + m)), 0.0); // ~unchanged when faint, at most LIMIT
+            }
+            """;
+
+    /** Brightest the beams together add to a pixel (they are compressed towards it). */
+    private static final float LIMIT = 0.55f;
+
+    /**
+     * Makes sure the beam buffer fits a frame of width x height, at half resolution or full. False if it can't be
+     * made.
+     */
+    private static boolean halfTarget(int width, int height, boolean half) {
+        int w = half ? Math.max(1, (width + 1) / 2) : width, h = half ? Math.max(1, (height + 1) / 2) : height;
+        if (halfFbo != 0 && w == halfWidth && h == halfHeight) return true;
+        if (compositeProgram == 0) {
+            int vs = compile(GL20.GL_VERTEX_SHADER, COMPOSITE_VERTEX),
+                    fs = compile(GL20.GL_FRAGMENT_SHADER, COMPOSITE_FRAGMENT.replace("LIMIT", Float.toString(LIMIT)));
+            if (vs == 0 || fs == 0) return false;
+            int p = GL20.glCreateProgram();
+            GL20.glAttachShader(p, vs);
+            GL20.glAttachShader(p, fs);
+            GL30.glBindFragDataLocation(p, 0, "fragColor");
+            GL20.glLinkProgram(p);
+            GL20.glDeleteShader(vs);
+            GL20.glDeleteShader(fs);
+            if (GL20.glGetProgrami(p, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+                ColorfulLights.LOGGER.error("Visible lamp beams: composite shader failed: {}", GL20.glGetProgramInfoLog(p));
+                GL20.glDeleteProgram(p);
+                failed = true;
+                return false;
+            }
+            compositeProgram = p;
+            uCompositeTex = GL20.glGetUniformLocation(p, "u_Tex");
+        }
+        int previousActive = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        GL13.glActiveTexture(GL13.GL_TEXTURE0 + SHADOW_UNIT);
+        int previousTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        if (halfTexture == 0) halfTexture = GL11.glGenTextures();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, halfTexture);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL13.GL_CLAMP_TO_EDGE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL13.GL_CLAMP_TO_EDGE);
+        GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_RGBA16F, w, h, 0, GL11.GL_RGBA, GL11.GL_FLOAT, (FloatBuffer) null);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTex);
+        GL13.glActiveTexture(previousActive);
+        if (halfFbo == 0) halfFbo = GlStateManager.glGenFramebuffers();
+        GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, halfFbo);
+        GlStateManager._glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, halfTexture, 0);
+        int status = GlStateManager.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER);
+        GL20.glDrawBuffers(GL30.GL_COLOR_ATTACHMENT0);
+        if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
+            ColorfulLights.LOGGER.error("Visible lamp beams: half resolution buffer incomplete ({}), drawing at full resolution", status);
+            failed = true;
+            return false;
+        }
+        halfWidth = w;
+        halfHeight = h;
+        return true;
+    }
     private static int shadowTexture;
     private static ShortBuffer shadowUpload;
     private static final short[][] UPLOADED = new short[MAX_BEAMS][];
@@ -208,12 +301,13 @@ public final class VolumetricBeams {
 
     // uniform locations
     private static int uViewProj, uLightPos, uRight, uUp, uDir, uSize, uDepth, uShadow, uInvProj, uScreen, uCone,
-            uShadowPos, uShadowDir, uColor, uSteps, uNoise;
+            uShadowPos, uShadowDir, uShadowRight, uShadowUp, uCap, uColor, uSteps, uNoise;
 
-    private record Beam(DynamicLights.Source source, Vec3 pos, Vec3 dir, double dist2) {
+    record Beam(DynamicLights.Source source, Vec3 pos, Vec3 dir, float length, float fade) {
     }
 
     private static final List<Beam> BEAMS = new ArrayList<>();
+    private static final colorfullights.debug.GpuTimer GPU = new colorfullights.debug.GpuTimer(Timings.Part.GPU_BEAMS);
 
     private VolumetricBeams() {
     }
@@ -244,18 +338,22 @@ public final class VolumetricBeams {
         for (DynamicLights.Source s : DynamicLights.sources()) {
             if (!s.isLongSpot() || s.depth == null || s.color < 0 || s.level <= 0) continue;
             Vec3 p = s.framePosition(pt);
-            double d2 = p.distanceToSqr(cam);
-            if (d2 > MAX_DISTANCE * MAX_DISTANCE) continue;
             Vec3 d = s.frameDirection(pt);
-            // bounding box of the cone
-            float r = s.range * Math.max(0.5f, Math.min(4f, s.tanOuter));
-            Vec3 mid = p.add(d.scale(s.range * 0.5));
-            AABB box = new AABB(mid, mid).inflate(r + s.range * 0.5);
+            // the beam only reaches as far as the shadow map lets any of it (a lamp facing a wall: a short cone)
+            float length = Math.max(1f, Math.min(s.range, s.depthReach > 0f ? s.depthReach : s.range));
+            float r = length * Math.min(4f, s.tanOuter);
+            Vec3 mid = p.add(d.scale(length * 0.5));
+            double toMid = mid.distanceTo(cam) - (r + length * 0.5);
+            if (toMid > MAX_DISTANCE) continue;
+            // the cone's own bounds, not the lamp's: a lamp behind the camera whose beam reaches into view is drawn
+            AABB box = new AABB(mid, mid).inflate(r + length * 0.5);
             if (!event.getFrustum().isVisible(box)) continue;
-            BEAMS.add(new Beam(s, p, d, d2));
+            float fade = (float) Math.min(1.0, (MAX_DISTANCE - toMid) / FADE_DISTANCE);
+            BEAMS.add(new Beam(s, p, d, length, fade));
         }
         if (BEAMS.isEmpty()) return;
-        BEAMS.sort(Comparator.comparingDouble(Beam::dist2));
+        // the beams that show most in the frame first (see DynamicLights' score)
+        BEAMS.sort(Comparator.comparingDouble((Beam b) -> -b.source().score));
 
         if (program == 0 && !init()) return;
         RenderTarget main = mc.getMainRenderTarget();
@@ -310,13 +408,25 @@ public final class VolumetricBeams {
         }
         GL20.glUniform1i(uDepth, DEPTH_UNIT);
         GL20.glUniform1i(uShadow, SHADOW_UNIT);
-        GL20.glUniform2f(uScreen, main.width, main.height);
+        // The beams go into a buffer of their own, added onto the frame afterwards with their sum compressed;
+        // at half resolution by default (smooth light doesn't need every pixel, and standing inside a few beams
+        // covers the whole screen several times).
+        boolean half = halfTarget(main.width, main.height, Config.beamHalfResolution); // true: drawing into the beam buffer
+        if (!half) bindFramebuffer(main); // making the buffer binds it
+        int bw = half ? halfWidth : main.width, bh = half ? halfHeight : main.height;
+        if (half) {
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, halfFbo);
+            GL11.glViewport(0, 0, bw, bh);
+            GL30.glClearBufferfv(GL11.GL_COLOR, 0, new float[]{0f, 0f, 0f, 0f});
+        }
+        GL20.glUniform2f(uScreen, bw, bh);
         GL20.glUniform1i(uSteps, Config.beamSteps);
         frame = (frame + 1) & 63;
         GL20.glUniform1f(uNoise, frame * 5.588238f);
         GL30.glBindVertexArray(vao);
 
         int n = Math.min(MAX_BEAMS, BEAMS.size());
+        GPU.begin();
         for (int k = 0; k < n; k++) {
             Beam beam = BEAMS.get(k);
             DynamicLights.Source s = beam.source();
@@ -335,16 +445,38 @@ public final class VolumetricBeams {
             GL20.glUniform3f(uRight, basis[0], basis[1], basis[2]);
             GL20.glUniform3f(uUp, basis[3], basis[4], basis[5]);
             GL20.glUniform3f(uDir, dx, dy, dz);
-            GL20.glUniform2f(uSize, s.range * tanOuter, s.range);
+            GL20.glUniform2f(uSize, beam.length() * tanOuter, beam.length());
+            GL20.glUniform1f(uCap, beam.length());
             GL20.glUniform4f(uCone, cosInner, cosOuter, s.range, tanOuter);
             GL20.glUniform4f(uShadowPos, (float) (s.sx - cam.x), (float) (s.sy - cam.y), (float) (s.sz - cam.z), shadows ? k : -1f);
             GL20.glUniform4f(uShadowDir, s.ddx, s.ddy, s.ddz, s.tanOuter);
-            float level = strength * s.level / 15f;
+            float[] sb = SpotDepth.basis(s.ddx, s.ddy, s.ddz);
+            GL20.glUniform3f(uShadowRight, sb[0], sb[1], sb[2]);
+            GL20.glUniform3f(uShadowUp, sb[3], sb[4], sb[5]);
+            float level = strength * s.level / 15f * beam.fade();
             GL20.glUniform3f(uColor, ((s.color >> 16) & 0xFF) / 255f * level, ((s.color >> 8) & 0xFF) / 255f * level,
                     (s.color & 0xFF) / 255f * level);
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
         }
 
+        if (half) {
+            // add the beams onto the frame (smoothly scaled up from half resolution)
+            bindFramebuffer(main);
+            GL11.glViewport(0, 0, main.width, main.height);
+            GlStateManager._glUseProgram(compositeProgram);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + SHADOW_UNIT);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, halfTexture);
+            GL20.glUniform1i(uCompositeTex, SHADOW_UNIT);
+            GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
+        }
+
+        // standing in a beam: glare
+        if (!BeamGlare.failed()) {
+            BeamGlare.draw(BEAMS, cam, event.getCamera().getLookVector(), viewProj, invProj, main.width, main.height,
+                    DEPTH_UNIT, 1f - 0.7f * day);
+        }
+        GPU.end();
+        Timings.counts(DynamicLights.sources().size(), n);
         GL30.glBindVertexArray(previousVao);
         GlStateManager._glUseProgram(previousProgram);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousShadowTex);
@@ -418,6 +550,9 @@ public final class VolumetricBeams {
         uCone = GL20.glGetUniformLocation(p, "u_Cone");
         uShadowPos = GL20.glGetUniformLocation(p, "u_ShadowPos");
         uShadowDir = GL20.glGetUniformLocation(p, "u_ShadowDir");
+        uShadowRight = GL20.glGetUniformLocation(p, "u_ShadowRight");
+        uShadowUp = GL20.glGetUniformLocation(p, "u_ShadowUp");
+        uCap = GL20.glGetUniformLocation(p, "u_Cap");
         uColor = GL20.glGetUniformLocation(p, "u_Color");
         uSteps = GL20.glGetUniformLocation(p, "u_Steps");
         uNoise = GL20.glGetUniformLocation(p, "u_Noise");
@@ -468,7 +603,7 @@ public final class VolumetricBeams {
         return true;
     }
 
-    private static int compile(int type, String source) {
+    static int compile(int type, String source) {
         int shader = GL20.glCreateShader(type);
         GL20.glShaderSource(shader, source);
         GL20.glCompileShader(shader);

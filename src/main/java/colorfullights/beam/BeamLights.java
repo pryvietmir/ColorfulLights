@@ -41,6 +41,8 @@ import java.util.function.Supplier;
  */
 public final class BeamLights {
     private static final int INTERVAL = 10;
+    /** A lamp with nothing changing around it still recasts its beam this often (ticks), just in case. */
+    private static final int REFRESH = 400;
     /** At most this many lamps per level are updated per interval. */
     private static final int MAX_LAMPS = 128;
     /** Rays: the axis, and this many around it halfway between the inner and outer angle. */
@@ -62,6 +64,10 @@ public final class BeamLights {
         final Queue<ChunkPos> loaded = new ConcurrentLinkedQueue<>();
         /** Lamps whose beam must be updated at the next tick (placed or turned). */
         final LongOpenHashSet urgent = new LongOpenHashSet();
+        /** Chunks where a block changed since the last interval (beam lights themselves don't count). */
+        final LongOpenHashSet dirtyChunks = new LongOpenHashSet();
+        /** Game time of each lamp's last beam update. */
+        final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap updated = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     }
 
     private static final Map<ServerLevel, LevelData> LEVELS = new ConcurrentHashMap<>();
@@ -101,7 +107,15 @@ public final class BeamLights {
     /** A block changed in a server level (from LevelChunk.setBlockState). Server thread. */
     public static void onBlockChanged(ServerLevel level, BlockPos pos, BlockState oldState, BlockState newState) {
         boolean was = DirectionalLamps.of(oldState) != null, is = DirectionalLamps.of(newState) != null;
-        if (!was && !is) return;
+        if (!was && !is) {
+            // beams near the change are recast at the next interval (the beam lights we place don't count)
+            LevelData data = LEVELS.get(level);
+            if (data != null && !data.lamps.isEmpty() && beamLight != null
+                    && !oldState.is(beamLight.get()) && !newState.is(beamLight.get())) {
+                data.dirtyChunks.add(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
+            }
+            return;
+        }
         LevelData data = data(level);
         long key = pos.asLong();
         if (is) {
@@ -109,6 +123,7 @@ public final class BeamLights {
             data.urgent.add(key);
         } else {
             data.lamps.remove(key);
+            data.updated.remove(key);
             data.urgent.remove(key);
             clear(level, data, key);
             colorfullights.lamp.LampInteraction.onLampRemoved(level, pos);
@@ -117,6 +132,15 @@ public final class BeamLights {
 
     public static void onLevelTick(LevelTickEvent.Post event) {
         if (!(event.getLevel() instanceof ServerLevel level)) return;
+        long start = colorfullights.debug.Timings.start();
+        try {
+            tick(level);
+        } finally {
+            colorfullights.debug.Timings.end(colorfullights.debug.Timings.Part.SERVER_BEAMS, start);
+        }
+    }
+
+    private static void tick(ServerLevel level) {
         LevelData data = LEVELS.get(level);
         if (data == null) return;
 
@@ -134,6 +158,9 @@ public final class BeamLights {
         if (level.getGameTime() % INTERVAL != 0 || data.lamps.isEmpty()) return;
 
         LongArrayList gone = new LongArrayList();
+        long[] dirty = data.dirtyChunks.toLongArray();
+        data.dirtyChunks.clear();
+        long now = level.getGameTime();
         int n = 0;
         for (long lamp : data.lamps.toLongArray()) {
             BlockPos pos = BlockPos.of(lamp);
@@ -142,13 +169,27 @@ public final class BeamLights {
                 gone.add(lamp);
                 continue;
             }
+            // only lamps with a block change within reach of their beam (or not updated for long) recast it
+            if (now - data.updated.getOrDefault(lamp, Long.MIN_VALUE / 2) < REFRESH && !nearAny(pos, dirty)) continue;
             if (n++ < MAX_LAMPS) update(level, data, lamp);
         }
         for (long lamp : gone) {
             data.lamps.remove(lamp);
+            data.updated.remove(lamp);
             long[] beams = data.beams.remove(lamp);
             if (beams != null) for (long b : beams) unclaim(data, b);
         }
+    }
+
+    /** Chunk radius around a lamp in which block changes can matter to its beam (longest beam 3 × 40 blocks). */
+    private static final int REACH_CHUNKS = 8;
+
+    private static boolean nearAny(BlockPos lamp, long[] chunks) {
+        int cx = lamp.getX() >> 4, cz = lamp.getZ() >> 4;
+        for (long c : chunks) {
+            if (Math.abs(ChunkPos.getX(c) - cx) <= REACH_CHUNKS && Math.abs(ChunkPos.getZ(c) - cz) <= REACH_CHUNKS) return true;
+        }
+        return false;
     }
 
     // --- lamps ---
@@ -172,11 +213,13 @@ public final class BeamLights {
     }
 
     private static void update(ServerLevel level, LevelData data, long lampKey) {
+        data.updated.put(lampKey, level.getGameTime());
         BlockPos lampPos = BlockPos.of(lampKey);
         BlockState state = level.getBlockState(lampPos);
         DirectionalLamps.Lamp lamp = DirectionalLamps.of(state);
         if (lamp == null) {
             data.lamps.remove(lampKey);
+            data.updated.remove(lampKey);
             clear(level, data, lampKey);
             return;
         }

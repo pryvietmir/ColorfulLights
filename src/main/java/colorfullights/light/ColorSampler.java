@@ -3,7 +3,7 @@ package colorfullights.light;
 import colorfullights.Config;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
@@ -26,7 +26,7 @@ public final class ColorSampler {
     private static final ThreadLocal<Cache> CACHE = ThreadLocal.withInitial(Cache::new);
 
     private static final class Cache {
-        final Long2IntOpenHashMap tints = new Long2IntOpenHashMap();
+        final Long2LongOpenHashMap tints = new Long2LongOpenHashMap();
         final float[] sum = new float[4];
         long version = -1;
     }
@@ -116,27 +116,73 @@ public final class ColorSampler {
         return 1f + ((tint & 0xFF) / 255f - 1f) * strength;
     }
 
-    /** Normalized light color (brightest channel = 255) at a block-corner lattice point, or WHITE if none. */
+    /** Cached "no placed light reaches this lattice point". */
+    private static final long NO_PLACED = 0L;
+    private static final long MISSING = -1L;
+
+    /**
+     * Normalized light color (brightest channel = 255) at a block-corner lattice point, or WHITE if none.
+     * <p>
+     * The placed emitters' share is cached per thread (as a color sum, until an emitter changes); dynamic lights,
+     * which move all the time, are added on top for every lookup while they're baked into meshes, so they don't
+     * throw the cache away whenever one moves.
+     */
     private static int latticeTint(int lx, int ly, int lz) {
         Cache cache = CACHE.get();
-        boolean withDynamic = !DynamicLights.inShader();
-        // Terrain tint depends on placed emitters, and on dynamic lights only while they're baked into meshes.
-        long version = (long) EmitterTracker.version() << 32 | (withDynamic ? DynamicLights.version() & 0xFFFFFFFFL : 0L);
+        long version = EmitterTracker.version();
         if (cache.version != version || cache.tints.size() > CACHE_LIMIT) {
             cache.tints.clear();
             cache.version = version;
         }
         long key = BlockPos.asLong(lx, ly, lz);
-        int tint = cache.tints.getOrDefault(key, -1);
-        if (tint < 0) {
-            float[] sum = cache.sum;
+        long placed = cache.tints.getOrDefault(key, MISSING);
+        float[] sum = cache.sum;
+        if (placed == MISSING) {
+            colorfullights.debug.Timings.count(colorfullights.debug.Timings.Part.TINT_MISS);
             sum[0] = sum[1] = sum[2] = sum[3] = 0f;
             accumulateNearby(lx, ly, lz, sum);
-            if (withDynamic) accumulateDynamic(lx, ly, lz, true, sum);
-            tint = sum[3] <= 0f ? WHITE : saturate(sum[0], sum[1], sum[2]);
-            cache.tints.put(key, tint);
+            placed = packSum(sum);
+            cache.tints.put(key, placed);
         }
-        return tint;
+        DynamicLights.Snapshot dynamic = DynamicLights.inShader() ? null : DynamicLights.current();
+        if (dynamic == null || dynamic.isEmpty()) {
+            return placed == NO_PLACED ? WHITE : saturate(sumR(placed), sumG(placed), sumB(placed));
+        }
+        if (placed == NO_PLACED) {
+            sum[0] = sum[1] = sum[2] = sum[3] = 0f;
+        } else {
+            sum[0] = sumR(placed);
+            sum[1] = sumG(placed);
+            sum[2] = sumB(placed);
+            sum[3] = 1f;
+        }
+        DynamicLights.accumulate(dynamic, lx, ly, lz, true, sum);
+        return sum[3] <= 0f ? WHITE : saturate(sum[0], sum[1], sum[2]);
+    }
+
+    /** A color sum as its brightest channel (float bits, high 32) and the normalized color (low 24); 0 for none. */
+    private static long packSum(float[] sum) {
+        if (sum[3] <= 0f) return NO_PLACED;
+        float max = Math.max(sum[0], Math.max(sum[1], sum[2]));
+        if (max <= 0f) return NO_PLACED;
+        int r = Math.round(sum[0] / max * 255f), g = Math.round(sum[1] / max * 255f), b = Math.round(sum[2] / max * 255f);
+        return (long) Float.floatToRawIntBits(max) << 32 | 1L << 24 | r << 16 | g << 8 | b;
+    }
+
+    private static float sumScale(long packed) {
+        return Float.intBitsToFloat((int) (packed >>> 32)) / 255f;
+    }
+
+    private static float sumR(long packed) {
+        return ((packed >> 16) & 0xFF) * sumScale(packed);
+    }
+
+    private static float sumG(long packed) {
+        return ((packed >> 8) & 0xFF) * sumScale(packed);
+    }
+
+    private static float sumB(long packed) {
+        return (packed & 0xFF) * sumScale(packed);
     }
 
     /** Adds placed emitters around a lattice point to a weighted color sum {r, g, b, w}. */

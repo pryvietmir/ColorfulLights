@@ -35,5 +35,8 @@
   "colorful_lights.configuration.volumetricBeams": "Visible beams in fog and rain",
   "colorful_lights.configuration.beamIntensity": "Visible beam brightness",
   "colorful_lights.configuration.beamSteps": "Visible beam quality (samples)",
-  "colorful_lights.configuration.beamBaseFog": "Haze in clear weather"
+  "colorful_lights.configuration.beamBaseFog": "Haze in clear weather",
+  "colorful_lights.configuration.beamGlare": "Glare from lamps shining at you",
+  "colorful_lights.configuration.glareIntensity": "Glare strength",
+  "colorful_lights.configuration.beamHalfResolution": "Visible beams at half resolution (faster)"
 }

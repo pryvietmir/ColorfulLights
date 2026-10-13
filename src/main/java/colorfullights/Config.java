@@ -104,6 +104,18 @@ public class Config {
                     "Rain, snow, night and being underground add to it.")
             .defineInRange("beamBaseFog", 0.15, 0.0, 1.0);
 
+    private static final ModConfigSpec.BooleanValue BEAM_HALF_RESOLUTION = BUILDER
+            .comment("Draw the visible beams at half resolution and scale them up (much faster, slightly softer edges).")
+            .define("beamHalfResolution", true);
+
+    private static final ModConfigSpec.BooleanValue BEAM_GLARE = BUILDER
+            .comment("Standing in a lamp's beam lights up the air around you, and a lamp shining straight at you dazzles.")
+            .define("beamGlare", true);
+
+    private static final ModConfigSpec.DoubleValue GLARE_INTENSITY = BUILDER
+            .comment("Strength of the glare from lamps shining at you (1 = default).")
+            .defineInRange("glareIntensity", 1.0, 0.0, 3.0);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     public static volatile boolean enabled = true;
@@ -127,6 +139,9 @@ public class Config {
     public static volatile float beamIntensity = 1.0f;
     public static volatile int beamSteps = 12;
     public static volatile float beamBaseFog = 0.15f;
+    public static volatile boolean beamGlare = true;
+    public static volatile boolean beamHalfResolution = true;
+    public static volatile float glareIntensity = 1.0f;
 
     private static boolean isColor(Object o) {
         return o instanceof String s && LightColors.parseColor(s) >= 0;
@@ -155,7 +170,8 @@ public class Config {
                 DYNAMIC_LIGHTS.get(), OBJECT_LIGHT_RANGE.get(), TINT_ENTITIES.get(), TEXTURE_COLORS.get(), DEFAULT_COLOR.get(), List.copyOf(COLORS.get()),
                 SPOT_COLOR.get(), SPOT_RANGE.get(), SPOT_FOCUS.get(), SPOT_LIGHTS.get(), SPOT_SHADOWS.get(),
                 MAX_DYNAMIC_LIGHTS.get(), MAX_BEAMS.get(), SHIP_LIGHTS.get(),
-                VOLUMETRIC_BEAMS.get(), BEAM_INTENSITY.get(), BEAM_STEPS.get(), BEAM_BASE_FOG.get());
+                VOLUMETRIC_BEAMS.get(), BEAM_INTENSITY.get(), BEAM_STEPS.get(), BEAM_BASE_FOG.get(),
+                BEAM_GLARE.get(), GLARE_INTENSITY.get(), BEAM_HALF_RESOLUTION.get());
         if (values.equals(applied)) return;
         applied = values;
 
@@ -181,6 +197,9 @@ public class Config {
         beamIntensity = BEAM_INTENSITY.get().floatValue();
         beamSteps = BEAM_STEPS.get();
         beamBaseFog = BEAM_BASE_FOG.get().floatValue();
+        beamGlare = BEAM_GLARE.get();
+        beamHalfResolution = BEAM_HALF_RESOLUTION.get();
+        glareIntensity = GLARE_INTENSITY.get().floatValue();
         if (shadowsChanged) colorfullights.light.DynamicLights.invalidateVisibility();
         LightColors.configure(COLORS.get(), LightColors.parseColor(DEFAULT_COLOR.get()), TEXTURE_COLORS.get());
     }

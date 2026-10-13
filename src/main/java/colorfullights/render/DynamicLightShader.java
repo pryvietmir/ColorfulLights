@@ -201,8 +201,12 @@ public final class DynamicLightShader {
                 float weightSum = 0.0;
                 for (int i = 0; i < u_DynCount; i++) {
                     vec3 toFrag = v_DynPos - u_DynPos[i].xyz;
-                    float dist = length(toFrag);
                     float range = u_DynSpot[i].x;
+                    // out of reach: skip before any square root or texture lookup
+                    float reach = range > 0.0 ? range : u_DynPos[i].w;
+                    float d2 = dot(toFrag, toFrag);
+                    if (d2 >= reach * reach) continue;
+                    float dist = sqrt(d2);
                     float lv = range > 0.0 ? u_DynPos[i].w * (1.0 - dist / range) : u_DynPos[i].w - dist;
                     if (lv <= 0.0) continue;
                     // spot cone (for plain lights smoothstep(-2, -1, c) = 1), and the spill right around the light
@@ -268,11 +272,12 @@ public final class DynamicLightShader {
         Vec3 cam = mc.gameRenderer.getMainCamera().getPosition();
         float pt = mc.getTimer().getGameTimeDeltaPartialTick(false);
 
-        // the nearest lights with a visibility volume get a slab (partial selection; there are few lights)
+        // the selected lights (those that show most in the frame, see DynamicLights) with a visibility volume get a
+        // slab, the nearest first (partial selection; there are few lights)
         List<DynamicLights.Source> candidates = CANDIDATES;
         candidates.clear();
         for (DynamicLights.Source s : DynamicLights.sources()) {
-            if (s.isReady() && s.level > 0 && s.color >= 0) candidates.add(s);
+            if (s.selected && s.isReady() && s.level > 0 && s.color >= 0) candidates.add(s);
         }
         int m = candidates.size();
         if (FRAME_POS.length < m) {

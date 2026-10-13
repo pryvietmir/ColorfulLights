@@ -37,7 +37,11 @@ public class ColorfulLightsClient {
         });
 
         NeoForge.EVENT_BUS.addListener(colorfullights.render.VolumetricBeams::onRenderStage);
-        if (colorfullights.debug.AutoScreenshot.enabled()) NeoForge.EVENT_BUS.addListener(colorfullights.debug.AutoScreenshot::onClientTick);
+        if (colorfullights.debug.Timings.ENABLED) NeoForge.EVENT_BUS.addListener(colorfullights.debug.Timings::onRenderStage);
+        if (colorfullights.debug.AutoScreenshot.enabled()) {
+            NeoForge.EVENT_BUS.addListener(colorfullights.debug.AutoScreenshot::onClientTick);
+            NeoForge.EVENT_BUS.addListener(colorfullights.debug.AutoScreenshot::onChat);
+        }
 
         DynamicLights.addLevelProvider(LampLights::collect);
 

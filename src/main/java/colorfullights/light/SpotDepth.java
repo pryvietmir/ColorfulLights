@@ -65,6 +65,11 @@ public final class SpotDepth {
             float v = (j + 0.5f) / RES * 2f - 1f;
             for (int i = 0; i < RES; i++) {
                 float u = (i + 0.5f) / RES * 2f - 1f;
+                // the corners of the map are outside the (round) cone: nothing to find there
+                if (u * u + v * v > EDGE2) {
+                    depth[j * RES + i] = (short) 0xFFFF;
+                    continue;
+                }
                 float rx = dx + (u * b[0] + v * b[3]) * tanOuter;
                 float ry = dy + (u * b[1] + v * b[4]) * tanOuter;
                 float rz = dz + (u * b[2] + v * b[5]) * tanOuter;
@@ -74,6 +79,23 @@ public final class SpotDepth {
             }
         }
         return depth;
+    }
+
+    /** Squared radius in map coordinates beyond which texels are outside the cone (with a texel of margin). */
+    private static final float EDGE2 = (1f + 2f / RES) * (1f + 2f / RES);
+
+    /** How far the beam gets before walls stop all of it: the furthest distance in the map (at most range). */
+    public static float reach(short[] depth, float range) {
+        int max = 0;
+        for (int j = 0; j < RES && max < 0xFFFF; j++) {
+            float v = (j + 0.5f) / RES * 2f - 1f;
+            for (int i = 0; i < RES; i++) {
+                float u = (i + 0.5f) / RES * 2f - 1f;
+                if (u * u + v * v > EDGE2) continue; // corners are always open
+                max = Math.max(max, depth[j * RES + i] & 0xFFFF);
+            }
+        }
+        return Math.min(range, max / 65535f * range + 1.5f);
     }
 
     /** Distance along a unit ray to the first cell whose block stops light (range if none). Amanatides-Woo DDA. */

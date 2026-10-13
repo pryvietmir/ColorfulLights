@@ -15,5 +15,8 @@
   "colorful_lights.configuration.volumetricBeams": "Видимые лучи в тумане и дожде",
   "colorful_lights.configuration.beamIntensity": "Яркость видимого луча",
   "colorful_lights.configuration.beamSteps": "Качество видимого луча (шаги)",
-  "colorful_lights.configuration.beamBaseFog": "Дымка в ясную погоду"
+  "colorful_lights.configuration.beamBaseFog": "Дымка в ясную погоду",
+  "colorful_lights.configuration.beamGlare": "Засветка от фар, светящих на вас",
+  "colorful_lights.configuration.glareIntensity": "Сила засветки",
+  "colorful_lights.configuration.beamHalfResolution": "Лучи в половинном разрешении (быстрее)"
 }

@@ -118,7 +118,7 @@ public final class EmitterTracker {
 
     /** Called from the client thread whenever a block changes in a client level. */
     public static void onBlockChanged(BlockPos pos, BlockState oldState, BlockState newState) {
-        DynamicLights.onBlockChanged(pos);
+        DynamicLights.onBlockChanged(pos, oldState, newState);
         if (SableCompat.LOADED) SableCompat.onBlockChanged(pos);
         boolean wasEmitter = oldState.getLightEmission() > 0;
         boolean isEmitter = newState.getLightEmission() > 0;
