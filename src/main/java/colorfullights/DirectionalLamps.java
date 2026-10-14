@@ -121,7 +121,15 @@ public final class DirectionalLamps {
     private static synchronized Map<Block, Lamp> build() {
         if (byBlock != null) return byBlock;
         Map<Block, Lamp> map = new IdentityHashMap<>();
-        for (Lamp lamp : TABLE) {
+        java.util.List<Lamp> lamps = new java.util.ArrayList<>(TABLE);
+        // every Design n' Decor frontlight, also kinds this table doesn't name (netherite, zinc, newer ones)
+        for (ResourceLocation id : BuiltInRegistries.BLOCK.keySet()) {
+            if (id.getNamespace().equals("dndecor") && id.getPath().endsWith("_frontlight")
+                    && lamps.stream().noneMatch(l -> l.block().equals(id))) {
+                lamps.add(frontlight(id.getPath()));
+            }
+        }
+        for (Lamp lamp : lamps) {
             BuiltInRegistries.BLOCK.getOptional(lamp.block()).ifPresent(block -> {
                 map.put(block, lamp);
                 for (BlockState state : block.getStateDefinition().getPossibleStates()) {

@@ -38,6 +38,8 @@ import java.util.List;
  */
 public final class DynamicLightShader {
     public static final int MAX_LIGHTS = 16;
+    /** How much of its block light a surface under the open sky loses at noon (see the fragment shader). */
+    private static final float DAY_FADE = 0.9f;
     /** Texture unit for the visibility volume (a 3D target, so it doesn't clash with 2D textures on the unit). */
     public static final int TEXTURE_UNIT = 4;
     /** Texture unit for the spot light shadow maps. */
@@ -145,6 +147,7 @@ public final class DynamicLightShader {
         }
         return src
                 .replace(decl, decl + "\n" + FRAGMENT_LIGHTING.replace("MAX_LIGHTS", Integer.toString(MAX_LIGHTS))
+                        .replace("DAY_FADE", Float.toString(DAY_FADE))
                         .replace("SPOT_RES", Integer.toString(SpotDepth.RES)))
                 .replace(apply, "color *= _dyn_light(v_Color); // Apply per-vertex color modulator + dynamic lights");
     }
@@ -188,6 +191,15 @@ public final class DynamicLightShader {
             }
 
             vec4 _dyn_light(vec4 lit) {
+                // Daylight outshines lamps: under the open sky by day, block light (baked into the mesh, raised by
+                // this mod's brightness) gives way to the day, so a torch never looks brighter than the sun around
+                // it. In the shade, indoors and at night nothing changes.
+                float daySky = u_DynParams.w * clamp(v_DynLight.y * 16.0 / 15.0, 0.0, 1.0);
+                float block = v_DynLight.x;
+                if (daySky > 0.001) {
+                    block *= 1.0 - DAY_FADE * daySky;
+                    lit = vec4(v_DynBase.rgb * texture(u_LightTex, vec2(block, v_DynLight.y)).rgb, lit.a);
+                }
                 if (u_DynCount == 0) return lit;
 
                 // Face normal from screen-space derivatives, turned towards the camera: the lit side of the face.
@@ -233,7 +245,7 @@ public final class DynamicLightShader {
                 if (level <= 0.0) return lit;
 
                 float dyn = min(level * u_DynParams.z, 15.0);
-                float base = v_DynLight.x * 16.0;
+                float base = block * 16.0;
 
                 vec3 tint = colorSum / weightSum;
                 tint /= max(max(tint.r, tint.g), max(tint.b, 1e-4));
@@ -245,7 +257,7 @@ public final class DynamicLightShader {
                 float kept = 0.5 * (mul.r + mul.g + mul.b) / 3.0 + 0.5 * dot(mul, vec3(0.2126, 0.7152, 0.0722));
                 float eff = max(base, min(15.0, dyn * min(2.5, 1.0 / max(kept, 1e-3))));
 
-                vec4 light = texture(u_LightTex, vec2(eff / 16.0, v_DynLight.y));
+                vec4 light = texture(u_LightTex, vec2(max(eff / 16.0, block), v_DynLight.y));
                 return vec4(v_DynBase.rgb * light.rgb * mul, lit.a);
             }
             """;
@@ -267,6 +279,10 @@ public final class DynamicLightShader {
     private static void prepareFrame() {
         Minecraft mc = Minecraft.getInstance();
         count = 0;
+        PARAMS[0] = Config.intensity;
+        PARAMS[1] = Config.skyReduction;
+        PARAMS[2] = Config.brightness;
+        PARAMS[3] = mc.level == null || !Config.enabled ? 0f : daylight(mc, mc.getTimer().getGameTimeDeltaPartialTick(false));
         if (!Config.enabled || !Config.dynamicLights || mc.level == null) return;
 
         Vec3 cam = mc.gameRenderer.getMainCamera().getPosition();
@@ -382,10 +398,6 @@ public final class DynamicLightShader {
                 SHADOW_DIR[i + 2] = s.ddz;
             }
         }
-        PARAMS[0] = Config.intensity;
-        PARAMS[1] = Config.skyReduction;
-        PARAMS[2] = Config.brightness;
-        PARAMS[3] = daylight(mc, pt);
     }
 
     /** How bright the day is, 0 (night) to 1 (clear noon), like vanilla's sky darkening; 0 without a sky. */

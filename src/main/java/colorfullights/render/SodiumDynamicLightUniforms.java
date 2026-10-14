@@ -48,6 +48,7 @@ public final class SodiumDynamicLightUniforms {
         DynamicLightShader.prepare();
         int n = DynamicLightShader.count;
         count.set(n);
+        params.set(DynamicLightShader.PARAMS, 1); // also without lights: daylight dims block light
         if (n == 0) return;
         positions.set(DynamicLightShader.POSITIONS, n);
         colors.set(DynamicLightShader.COLORS, n);
@@ -57,7 +58,6 @@ public final class SodiumDynamicLightUniforms {
         shadowPositions.set(DynamicLightShader.SHADOW_POS, n);
         shadowDirections.set(DynamicLightShader.SHADOW_DIR, n);
         depth.set(DynamicLightShader.DEPTH_TEXTURE_UNIT);
-        params.set(DynamicLightShader.PARAMS, 1);
         visibility.set(DynamicLightShader.TEXTURE_UNIT);
         DynamicLightShader.bindTexture();
     }
