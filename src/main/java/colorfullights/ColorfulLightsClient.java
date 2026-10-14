@@ -5,7 +5,6 @@ import colorfullights.light.DynamicLights;
 import colorfullights.light.EmitterTracker;
 import colorfullights.light.LampLights;
 import colorfullights.lamp.LampSettings;
-import colorfullights.network.DarknessSettings;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -16,7 +15,7 @@ import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 
-/** Client entry point: config, colored and dynamic lighting, rendering darkness. Never loaded on a dedicated server. */
+/** Client entry point: config, colored and dynamic lighting, visible beams. Never loaded on a dedicated server. */
 @Mod(value = ColorfulLights.MODID, dist = Dist.CLIENT)
 public class ColorfulLightsClient {
     public ColorfulLightsClient(IEventBus modEventBus, ModContainer modContainer) {
@@ -32,7 +31,6 @@ public class ColorfulLightsClient {
         NeoForge.EVENT_BUS.addListener(EmitterTracker::onChunkUnload);
         NeoForge.EVENT_BUS.addListener(EmitterTracker::onLevelUnload);
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
-            DarknessSettings.reset();
             LampSettings.reset();
         });
 

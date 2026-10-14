@@ -30,8 +30,8 @@ displayName = "${mod_name}" #mandatory
 #credits="" #optional
 # A text field displayed in the mod UI
 authors = "${mod_authors}" #optional
-# Needed on both sides: the server decides darkness and only lets in clients with the same mod
-# (its network channel is required). The server list shows servers with another version as incompatible.
+# Needed on both sides: the server places beam lights and sends lamp settings, and only lets in clients with
+# the same mod (its network channel is required). The server list shows servers with another version as incompatible.
 displayTest = "MATCH_VERSION"
 
 # The description text for the mod (multi line!) (#mandatory)
@@ -80,15 +80,6 @@ side = "BOTH"
 # stop your mod loading on the server for example.
 #[features."${mod_id}"]
 #openGLVersion="[3.2,)"
-
-# Load after Big Globe so data/bigglobe/dimension_type/nether.json from this jar (no ambient light)
-# is placed above Big Globe's own copy in the mod data pack order.
-[[dependencies."${mod_id}"]]
-modId = "bigglobe"
-type = "optional"
-versionRange = "*"
-ordering = "AFTER"
-side = "BOTH"
 
 # Sodium is optional: without it the vanilla chunk mesher is hooked instead.
 [[dependencies."${mod_id}"]]

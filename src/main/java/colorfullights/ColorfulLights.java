@@ -8,8 +8,6 @@ import com.mojang.logging.LogUtils;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.config.ModConfig;
-import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.registries.DeferredBlock;
@@ -17,14 +15,12 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 import org.slf4j.Logger;
 
 /**
- * Colorful Lights: tints block light by the color of nearby light sources, adds dynamic and spot lights, and makes
- * unlit places truly dark.
+ * Colorful Lights: tints block light by the color of nearby light sources, and adds dynamic and spot lights.
  * <p>
  * Rendering is client side (see {@link ColorfulLightsClient}); the color is baked into terrain vertex colors when
- * chunks are meshed, both by the vanilla section compiler and by Sodium. The common part decides darkness: its
- * settings are a server config sent to the players, and the Nether dimension types have no ambient light. Beams of
- * directional lamps ({@link DirectionalLamps}) get real light on the server. A server with this mod only lets in
- * clients that have it too.
+ * chunks are meshed, both by the vanilla section compiler and by Sodium. Beams of directional lamps
+ * ({@link DirectionalLamps}) get real light on the server, and lamp settings are sent to the players. A server with
+ * this mod only lets in clients that have it too.
  */
 @Mod(ColorfulLights.MODID)
 public class ColorfulLights {
@@ -40,11 +36,7 @@ public class ColorfulLights {
         BLOCKS.register(modEventBus);
         BeamLights.init(BEAM_LIGHT);
         modEventBus.addListener((FMLCommonSetupEvent event) -> event.enqueueWork(DirectionalLamps::applyAmbientLight));
-        modContainer.registerConfig(ModConfig.Type.SERVER, ServerConfig.SPEC);
         modEventBus.addListener(Network::onRegisterPayloads);
-        modEventBus.addListener((ModConfigEvent.Reloading event) -> {
-            if (event.getConfig().getSpec() == ServerConfig.SPEC) Network.onServerConfigChanged();
-        });
         NeoForge.EVENT_BUS.addListener(Network::onPlayerLoggedIn);
         NeoForge.EVENT_BUS.addListener(LampInteraction::onRightClickBlock);
         NeoForge.EVENT_BUS.addListener(LampInteraction::onChangedDimension);

@@ -15,7 +15,6 @@
     "ItemInHandRendererMixin",
     "LevelChunkMixin",
     "LevelRendererMixin",
-    "LightTextureMixin",
     "ModelBlockRendererMixin",
     "SectionCompilerMixin",
     "SingleQuadParticleMixin",

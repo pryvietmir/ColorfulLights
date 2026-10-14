@@ -23,9 +23,6 @@ and modded light sources are picked up automatically.
   by the light they move through.
 - **Create Aeronautics (Sable).** Lamps on ships light the world, and ships are lit and tinted by the lights they
   fly past (with extra reach for lights open to the sky).
-- **True darkness.** Places without block or sky light are (almost) black whatever the gamma; the moon lights
-  the surface a little by its phase, night vision and conduit power cancel it. The Nether (also Big Globe's) has
-  no ambient light. Dynamic lights pull things out of the dark.
 - **Iris.** Works with shader packs: colored terrain light is kept, and dynamic lights fall back to being baked
   into chunks (they then move block by block).
 
@@ -40,8 +37,9 @@ and modded light sources are picked up automatically.
 ## Requirements
 
 - Minecraft 1.21.1, NeoForge 21.1+
-- Install on both the client and the server. The server decides darkness for everyone, and its network channel is
-  required: clients without the mod can't join a server with it, and clients with it can't join servers without it.
+- Install on both the client and the server (the server places the beam lights of lamps and sends lamp
+  settings). The network channel is required: clients without the mod can't join a server with it, and clients
+  with it can't join servers without it.
 - Optional: Sodium 0.8+, Iris 1.8+, Create 6.0+, Create Aeronautics / Sable 2.0+
 
 ## Configuration
@@ -63,17 +61,8 @@ immediately.
 | `defaultColor` | `#FFFFFF` | Color when a block has no usable texture |
 | `colors` | | Overrides, e.g. `"minecraft:torch=#FFB060"` |
 
-Darkness is set by the server in its `config/colorful_lights-server.toml` (for singleplayer, the game's own file)
-and sent to players when they join or the file changes. Players can't turn it off; only night vision and conduit
-power cancel it, as in vanilla.
-
-| Option (`[darkness]`) | Default | |
-|---|---|---|
-| `enabled` | `true` | Master switch for darkness |
-| `strength` | `1.0` | 0 = vanilla lighting, 1 = light level 0 is pitch black |
-| `moonlight` | `0.25` | How much the full moon lights the surface |
-| `overworld` / `nether` / `end` / `otherDimensions` | `true` | Darkness per dimension |
-| `excludedDimensions` | | Dimension ids without darkness |
+Darkness (true darkness, the Nether without ambient light) is no longer part of this mod: it moved to Harsh World
+(its `darkness` module). Visible beams take the haze of Harsh World's weather fog when it is installed.
 
 ## Building
 
