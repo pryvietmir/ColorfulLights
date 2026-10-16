@@ -256,7 +256,10 @@ public final class DynamicLightShader {
                 vec3 mul = mix(vec3(1.0), tint, strength);
                 // colored light darkens; make up for it with extra light, like the baked lighting does
                 float kept = 0.5 * (mul.r + mul.g + mul.b) / 3.0 + 0.5 * dot(mul, vec3(0.2126, 0.7152, 0.0722));
-                float eff = max(base, min(15.0, dyn * min(2.5, 1.0 / max(kept, 1e-3))));
+                // The tint colors all the light on the surface, so the whole light is lifted by what the tint takes.
+                // (Lifting only the dynamic light left a darker band at the edge of a beam, where the beam is a bit
+                // weaker than the light already there: tinted, but not lifted.)
+                float eff = min(15.0, max(base, dyn) * min(2.5, 1.0 / max(kept, 1e-3)));
 
                 vec4 light = texture(u_LightTex, vec2(max(eff / 16.0, block), v_DynLight.y));
                 return vec4(v_DynBase.rgb * light.rgb * mul, lit.a);
