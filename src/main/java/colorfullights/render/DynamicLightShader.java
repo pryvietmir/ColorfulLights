@@ -178,7 +178,8 @@ public final class DynamicLightShader {
                 vec3 v = p - u_DynShadowPos[i].xyz;
                 float fwd = dot(v, dir);
                 if (fwd <= 1e-4) return 0.0;
-                vec3 right = normalize(cross(dir, abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+                // the map's right axis comes precomputed in the unused w components (see prepareFrame)
+                vec3 right = vec3(u_DynShadowPos[i].w, u_DynShadowDir[i].w, u_DynSpot[i].w);
                 vec3 up = cross(right, dir);
                 vec2 uv = vec2(dot(v, right), dot(v, up)) / (fwd * u_DynSpot[i].z);
                 // outside a stale map (the lamp turned since it was computed): no shadow known, so lit
@@ -396,6 +397,12 @@ public final class DynamicLightShader {
                 SHADOW_DIR[i] = s.ddx;
                 SHADOW_DIR[i + 1] = s.ddy;
                 SHADOW_DIR[i + 2] = s.ddz;
+                // right axis of the map's rays, so the fragment shader doesn't normalize a cross product per pixel
+                // and light; it rides in the w components, which are otherwise unused
+                float[] basis = s.basis != null ? s.basis : SpotDepth.basis(s.ddx, s.ddy, s.ddz);
+                SHADOW_POS[i + 3] = basis[0];
+                SHADOW_DIR[i + 3] = basis[1];
+                SPOTS[i + 3] = basis[2];
             }
         }
     }

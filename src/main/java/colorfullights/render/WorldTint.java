@@ -59,7 +59,47 @@ public final class WorldTint {
     /** Wraps a buffer source so everything drawn into it is tinted with the light color at a position. */
     public static MultiBufferSource wrap(MultiBufferSource buffers, double x, double y, double z) {
         int tint = at(x, y, z);
-        return tint == WHITE ? buffers : type -> new TintedVertexConsumer().set(buffers, type, tint);
+        return tint == WHITE ? buffers : nextSource().set(buffers, tint);
+    }
+
+    /**
+     * Wrapped sources are reused instead of allocating a source and a consumer per render type for every entity in
+     * every frame. A source is only in use while its object renders, so a ring this deep is never caught up with
+     * by nested rendering (passengers, items in hand, block entities on contraptions).
+     */
+    private static final TintSource[] POOL = new TintSource[256];
+    private static int poolNext;
+
+    private static TintSource nextSource() {
+        int i = poolNext;
+        poolNext = (i + 1) & (POOL.length - 1);
+        TintSource source = POOL[i];
+        if (source == null) POOL[i] = source = new TintSource();
+        return source;
+    }
+
+    /** A tinting buffer source with one consumer per render type, kept across uses. */
+    private static final class TintSource implements MultiBufferSource {
+        private final java.util.IdentityHashMap<net.minecraft.client.renderer.RenderType, TintedVertexConsumer> consumers =
+                new java.util.IdentityHashMap<>();
+        private MultiBufferSource buffers;
+        private int tint;
+
+        TintSource set(MultiBufferSource buffers, int tint) {
+            this.buffers = buffers;
+            this.tint = tint;
+            return this;
+        }
+
+        @Override
+        public VertexConsumer getBuffer(net.minecraft.client.renderer.RenderType type) {
+            TintedVertexConsumer consumer = consumers.get(type);
+            if (consumer == null) {
+                if (consumers.size() >= 64) consumers.clear(); // render types made per texture: don't grow forever
+                consumers.put(type, consumer = new TintedVertexConsumer());
+            }
+            return consumer.set(buffers, type, tint);
+        }
     }
 
     /** Wraps a particle's vertex consumer; the returned consumer is reused for the next particle. */
