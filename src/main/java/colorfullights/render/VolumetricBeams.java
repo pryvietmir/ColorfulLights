@@ -634,7 +634,7 @@ public final class VolumetricBeams {
         if (!mc.level.dimensionType().hasSkyLight()) return 0f;
         float g = 1f - (Mth.cos(mc.level.getTimeOfDay(pt) * ((float) Math.PI * 2f)) * 2f + 0.2f);
         g = 1f - Mth.clamp(g, 0f, 1f);
-        g *= 1f - mc.level.getRainLevel(pt) * 5f / 16f;
+        g *= 1f - colorfullights.compat.SimpleCloudsRain.rainAtCamera(mc, pt) * 5f / 16f; // Simple Clouds: local rain
         g *= 1f - mc.level.getThunderLevel(pt) * 5f / 16f;
         return g;
     }

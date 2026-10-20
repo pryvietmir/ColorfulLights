@@ -262,7 +262,15 @@ public final class DynamicLightShader {
                 float eff = min(15.0, max(base, dyn) * min(2.5, 1.0 / max(kept, 1e-3)));
 
                 vec4 light = texture(u_LightTex, vec2(max(eff / 16.0, block), v_DynLight.y));
-                return vec4(v_DynBase.rgb * light.rgb * mul, lit.a);
+                vec3 outColor = v_DynBase.rgb * light.rgb * mul;
+                // A lamp never darkens: where the light map is already saturated by the sky (day, or the dim grey of
+                // rain), lifting the block light can't make up for what the tint takes, and the spot came out darker
+                // than the ground around it. Keep at least the brightness the surface had without the lamp.
+                const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+                float before = dot(lit.rgb, LUMA);
+                float after = dot(outColor, LUMA);
+                if (after < before) outColor *= min(3.0, before / max(after, 1e-4));
+                return vec4(outColor, lit.a);
             }
             """;
 
@@ -415,7 +423,8 @@ public final class DynamicLightShader {
         if (!mc.level.dimensionType().hasSkyLight()) return 0f;
         float g = 1f - (net.minecraft.util.Mth.cos(mc.level.getTimeOfDay(pt) * ((float) Math.PI * 2f)) * 2f + 0.2f);
         g = 1f - net.minecraft.util.Mth.clamp(g, 0f, 1f);
-        g *= 1f - mc.level.getRainLevel(pt) * 5f / 16f;
+        // Simple Clouds: rain is local (only under a cloud) — take it where the camera is, not vanilla's global level
+        g *= 1f - colorfullights.compat.SimpleCloudsRain.rainAtCamera(mc, pt) * 5f / 16f;
         g *= 1f - mc.level.getThunderLevel(pt) * 5f / 16f;
         return g;
     }
