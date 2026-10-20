@@ -382,10 +382,12 @@ public final class ColorSampler {
         // Objects are recomputed every tick, so unlike baked terrain they can tell day from night:
         // sky light only washes the color out while the sky is actually bright.
         float daylight = 1f - level.getSkyDarken() / 11f;
-        float sky = level.getBrightness(LightLayer.SKY, pos) / 15f * daylight;
-        // In daylight under the open sky the tint (which only darkens a mob) all but disappears, whatever the
-        // terrain setting is: sunlit mobs next to a lamp must not look dimmed or colored.
-        float strength = Config.intensity * Math.min(1f, blockLevel / 15f * 2.5f) * (1f - Math.max(Config.skyReduction, 0.95f) * sky);
+        float skyLight = level.getBrightness(LightLayer.SKY, pos) / 15f;
+        // Sky light washes the color out like it does on the terrain around (skyReduction, whatever the time: the
+        // terrain's tint is baked and can't tell day from night), so a mob is never more colored than the ground
+        // it stands on. In daylight under the open sky the tint (which only darkens a mob) all but disappears too.
+        float washOut = Math.max(Config.skyReduction * skyLight, 0.95f * skyLight * daylight);
+        float strength = Config.intensity * Math.min(1f, blockLevel / 15f * 2.5f) * (1f - washOut);
         if (strength <= 0f) return WHITE;
         int r = Math.round(255f * multiplier(tint >> 16, strength));
         int g = Math.round(255f * multiplier(tint >> 8, strength));
